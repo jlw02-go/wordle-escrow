@@ -1,33 +1,22 @@
-// IMPORTANT: To enable Giphy integration, the VITE_GIPHY_API_KEY environment variable must be set.
-const GIPHY_API_KEY = import.meta.env.VITE_GIPHY_API_KEY;
-
-const getRandomItem = <T,>(arr: T[]): T => arr[Math.floor(Math.random() * arr.length)];
-
 export const getGiphyUrl = async (isWinner: boolean): Promise<string | null> => {
-    if (!GIPHY_API_KEY) {
-        console.error("VITE_GIPHY_API_KEY environment variable is not set.");
-        return null;
-    }
-
-    const winTerms = ['wordle win', 'success', 'celebration', 'nailed it', 'genius'];
-    const loseTerms = ['wordle fail', 'so close', 'disappointed', 'try again tomorrow'];
-    
-    const searchTerm = isWinner ? getRandomItem(winTerms) : getRandomItem(loseTerms);
-    const url = `https://api.giphy.com/v1/gifs/search?api_key=${GIPHY_API_KEY}&q=${encodeURIComponent(searchTerm)}&limit=25&offset=0&rating=g&lang=en`;
-
     try {
-        const response = await fetch(url);
+        const response = await fetch('/.netlify/functions/getGiphyUrl', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ isWinner }),
+        });
+
         if (!response.ok) {
-            throw new Error(`Giphy API request failed with status ${response.status}`);
+            console.error('Failed to fetch from Giphy function');
+            return null;
         }
+
         const data = await response.json();
-        if (data.data && data.data.length > 0) {
-            const randomIndex = Math.floor(Math.random() * data.data.length);
-            return data.data[randomIndex].images.original.url;
-        }
-        return null;
+        return data.gifUrl;
     } catch (error) {
-        console.error('Error fetching from Giphy:', error);
+        console.error('Error calling Giphy function:', error);
         return null;
     }
 };
