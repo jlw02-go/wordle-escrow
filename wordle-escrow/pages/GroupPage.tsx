@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
-// FIX: Use namespace import for react-router-dom to resolve potential module resolution issues.
-import * as ReactRouterDOM from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useGroupData } from '../hooks/useGroupData';
 import { useWordleData } from '../hooks/useWordleData';
 import ScoreInputForm from '../components/ScoreInputForm';
@@ -11,22 +10,19 @@ import GameHistory from '../components/GameHistory';
 import HeadToHeadStats from '../components/HeadToHeadStats';
 import GiphyDisplay from '../components/GiphyDisplay';
 
-const { useParams, useNavigate, Link } = ReactRouterDOM;
-
 const GroupPage: React.FC = () => {
     const { groupId } = useParams<{ groupId: string }>();
     const navigate = useNavigate();
     const { getGroupById, groups, loading: groupsLoading } = useGroupData();
+
     const group = getGroupById(groupId!);
 
     useEffect(() => {
-        // This effect redirects if the group isn't found *after* the initial group list has loaded.
         if (!groupsLoading && groups.length > 0 && !group) {
             navigate('/');
         }
     }, [groupsLoading, groups, group, navigate, groupId]);
-
-
+    
     const {
         stats,
         today,
@@ -36,7 +32,7 @@ const GroupPage: React.FC = () => {
         saveAiSummary,
         players,
         loading: wordleDataLoading,
-    } = useWordleData(group);
+    } = useWordleData({ group });
 
     const [view, setView] = useState<'today' | 'history' | 'h2h'>('today');
 
