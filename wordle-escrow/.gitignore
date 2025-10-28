@@ -1,15 +1,23 @@
-# Ignore environment files with secrets
+# Environment variables
 .env
 .env.*
 
-# Ignore build output
+# Build output
 dist
 build
 
-# Ignore Node modules
+# Dependencies
 node_modules
 
-# Ignore IDE/editor files
-.DS_Store
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Editor & OS files
 .vscode/
-*.log
+.DS_Store
+
+# Netlify build artifacts (if generated locally)
+.netlify
