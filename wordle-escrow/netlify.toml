@@ -1,24 +1,19 @@
-# This section provides the definitive build instructions for your Vite project.
+# Build Vite and publish the dist folder
 [build]
   command = "npm run build"
   publish = "dist"
 
-# This tells Netlify where to find your secure serverless functions.
-[functions]
-  directory = "netlify/functions"
+# (Optional) Only keep this if you actually have serverless functions
+#[functions]
+#  directory = "netlify/functions"
 
-# This is the crucial Single Page Application (SPA) redirect rule.
-# It solves the "Page Not Found" error when you reload a page.
+# Single Page App routing (BrowserRouter)
 [[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200
 
-# This section uses the official Netlify plugin to solve the final secrets scanning error.
-# It directly implements the solution recommended by your last build log.
-# It explicitly tells the scanner: "It is safe and expected for the Firebase
-# client-side keys to be present in the final build output. Please ignore them."
-
-  [plugins.inputs]
-  # Use a wildcard to ignore all keys starting with VITE_FIREBASE_
-  excludedKeys = ["VITE_FIREBASE_*"]
+# Pin runtime to avoid surprise npm/node drift
+[build.environment]
+  NODE_VERSION = "18"
+  NPM_VERSION  = "10"
