@@ -18,8 +18,6 @@
 # It directly implements the solution recommended by your last build log.
 # It explicitly tells the scanner: "It is safe and expected for the Firebase
 # client-side keys to be present in the final build output. Please ignore them."
-[[plugins]]
-package = "@netlify/plugin-secrets-scan"
 
   [plugins.inputs]
   # Use a wildcard to ignore all keys starting with VITE_FIREBASE_
