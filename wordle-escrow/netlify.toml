@@ -1,12 +1,16 @@
 # This section tells Netlify how to build your Vite project.
-# It specifies the build command and the directory where the final files are placed.
+# It specifies the build command and the directory where the final, compiled site is placed.
 [build]
   command = "npm run build"
   publish = "dist"
 
-# This is the crucial Single Page App (SPA) redirect rule.
-# It solves the "Page Not Found" error when you reload a page.
-# It tells Netlify: "For any URL the user visits, if you can't find a file for it,
+# This tells Netlify where to find your serverless functions (for Gemini and Giphy).
+[functions]
+  directory = "netlify/functions"
+
+# This is the crucial Single Page Application (SPA) redirect rule.
+# It solves the "Page Not Found" error when you reload a page or visit a deep link.
+# It tells Netlify: "For any URL the user visits, if you can't find a corresponding file,
 # just serve the main index.html file instead." Your React app will then handle the routing.
 [[redirects]]
   from = "/*"
