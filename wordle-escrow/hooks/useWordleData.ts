@@ -16,7 +16,8 @@ const calculateAllPlayerStats = (data: AllSubmissions, players: string[]): AllPl
 
   players.forEach(player => {
     const playerSubmissions = Object.values(data)
-      .map(dailyData => dailyData.submissions[player])
+      // This is the critical fix: `submissions?.[player]` prevents the crash.
+      .map(dailyData => dailyData.submissions?.[player])
       .filter(Boolean)
       .sort((a, b) => a.date.localeCompare(b.date));
 
