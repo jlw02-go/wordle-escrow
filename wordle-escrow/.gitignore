@@ -1,0 +1,15 @@
+# Ignore environment files with secrets
+.env
+.env.*
+
+# Ignore build output
+dist
+build
+
+# Ignore Node modules
+node_modules
+
+# Ignore IDE/editor files
+.DS_Store
+.vscode/
+*.log
