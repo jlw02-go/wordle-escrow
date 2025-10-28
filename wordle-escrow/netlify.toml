@@ -1,27 +1,14 @@
-
+# This section tells Netlify how to build your Vite project.
+# It specifies the build command and the directory where the final files are placed.
 [build]
   command = "npm run build"
   publish = "dist"
 
-
-[dev]
-  command = "npm run dev"
-  targetPort = 5173
-  port = 8888
-  autoLaunch = true
-
-
+# This is the crucial Single Page App (SPA) redirect rule.
+# It solves the "Page Not Found" error when you reload a page.
+# It tells Netlify: "For any URL the user visits, if you can't find a file for it,
+# just serve the main index.html file instead." Your React app will then handle the routing.
 [[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200
-
-
-[[headers]]
-  for = "/*"
-  [headers.values]
-    X-Frame-Options = "DENY"
-    X-Content-Type-Options = "nosniff"
-    Referrer-Policy = "no-referrer-when-downgrade"
-    Cache-Control = "public, max-age=31536000"
-
