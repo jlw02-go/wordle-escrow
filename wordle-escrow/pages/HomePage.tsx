@@ -1,9 +1,6 @@
 import React, { useState } from 'react';
-// FIX: Use namespace import for react-router-dom to resolve potential module resolution issues.
-import * as ReactRouterDOM from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useGroupData } from '../hooks/useGroupData';
-
-const { Link, useNavigate } = ReactRouterDOM;
 
 const HomePage: React.FC = () => {
     const { groups, addGroup, deleteGroup, loading } = useGroupData();
