@@ -130,8 +130,7 @@ export const useWordleData = ({ group }: UseWordleDataProps) => {
         [`submissions.${submission.player}`]: submission
     };
     
-    // **THIS IS THE FIX: Optimistic UI Update**
-    // Immediately update the local state to make the UI feel instant.
+    // **THE FIX: Perform a standard, immutable optimistic update.**
     setAllSubmissions(prev => {
         const currentDateData = prev[date] || { submissions: {} };
         const updatedSubmissions = {
