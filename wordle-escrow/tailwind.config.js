@@ -1,13 +1,15 @@
 /** @type {import('tailwindcss').Config} */
 export default {
-  // This tells Tailwind to scan all of your HTML, TSX, and JS files
-  // in the root directory and all subdirectories for class names.
+  // This is the critical fix. This pattern tells Tailwind to only scan
+  // your source code files for CSS classes, preventing it from scanning
+  // the massive node_modules folder, which solves the memory issue.
   content: [
     "./index.html",
-    "./**/*.{js,ts,jsx,tsx}",
+    "./{App,index}.tsx",
+    "./{components,pages,hooks,services,utils}/**/*.{js,ts,jsx,tsx}",
   ],
   theme: {
-    // This section adds your custom colors to Tailwind's theme.
+    // This section correctly adds your custom colors to Tailwind's theme.
     extend: {
       colors: {
         'wordle-dark': '#121213',
