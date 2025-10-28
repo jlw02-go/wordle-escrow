@@ -1,9 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { AllSubmissions, AllPlayerStats, DailySubmissions, Submission, DailyData, Group } from '../types';
 import { db } from '../firebase';
-// FIX: Use namespace import for firestore to maintain consistency with module resolution fixes.
-import * as firestore from 'firebase/firestore';
-import { debounce } from 'lodash';
+import { collection, onSnapshot, doc, setDoc, updateDoc } from 'firebase/firestore';
 
 const getTodayDateString = (): string => {
   const today = new Date();
@@ -81,7 +79,12 @@ const calculateAllPlayerStats = (data: AllSubmissions, players: string[]): AllPl
   return stats;
 };
 
-export const useWordleData = (group: Group | undefined) => {
+interface UseWordleDataProps {
+    group: Group | undefined;
+}
+
+
+export const useWordleData = ({ group }: UseWordleDataProps) => {
     const [allSubmissions, setAllSubmissions] = useState<AllSubmissions>({});
     const [loading, setLoading] = useState(true);
 
@@ -94,8 +97,8 @@ export const useWordleData = (group: Group | undefined) => {
         }
 
         setLoading(true);
-        const submissionsCol = firestore.collection(db, 'groups', group.id, 'submissions');
-        const unsubscribe = firestore.onSnapshot(submissionsCol, (snapshot) => {
+        const submissionsCol = collection(db, 'groups', group.id, 'submissions');
+        const unsubscribe = onSnapshot(submissionsCol, (snapshot) => {
             const subs: AllSubmissions = {};
             snapshot.forEach(doc => {
                 subs[doc.id] = doc.data() as DailyData;
@@ -121,7 +124,7 @@ export const useWordleData = (group: Group | undefined) => {
     if (!group?.id || !db) return;
 
     const date = submission.date;
-    const submissionDocRef = firestore.doc(db, 'groups', group.id, 'submissions', date);
+    const submissionDocRef = doc(db, 'groups', group.id, 'submissions', date);
 
     const newSubmissionPayload = {
         [`submissions.${submission.player}`]: submission
@@ -130,7 +133,7 @@ export const useWordleData = (group: Group | undefined) => {
     try {
       // Use set with merge to create the document if it doesn't exist,
       // or update it if it does. This prevents overwriting other players' scores.
-      await firestore.setDoc(submissionDocRef, newSubmissionPayload, { merge: true });
+      await setDoc(submissionDocRef, newSubmissionPayload, { merge: true });
     } catch(e) {
       console.error("Error adding submission: ", e);
     }
@@ -138,8 +141,8 @@ export const useWordleData = (group: Group | undefined) => {
 
   const saveAiSummary = useCallback(async (date: string, summary: string) => {
     if (!group?.id || !db) return;
-    const submissionDocRef = firestore.doc(db, 'groups', group.id, 'submissions', date);
-    await firestore.updateDoc(submissionDocRef, { aiSummary: summary });
+    const submissionDocRef = doc(db, 'groups', group.id, 'submissions', date);
+    await updateDoc(submissionDocRef, { aiSummary: summary });
   }, [group?.id]);
 
   return { 
