@@ -3,7 +3,12 @@ import { GoogleGenAI } from "@google/genai";
 import { DailySubmissions } from '../types';
 
 export const getDailySummary = async (submissions: DailySubmissions): Promise<string> => {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    // Use Vite's method for accessing client-side environment variables.
+    const apiKey = import.meta.env.VITE_API_KEY;
+    if (!apiKey) {
+        throw new Error("VITE_API_KEY is not configured.");
+    }
+    const ai = new GoogleGenAI({ apiKey });
     
     const scoresText = Object.values(submissions)
         .map(sub => {
