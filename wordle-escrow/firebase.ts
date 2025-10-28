@@ -2,20 +2,18 @@
 import * as firebaseApp from "firebase/app";
 import * as firestore from "firebase/firestore";
 
-// IMPORTANT: Replace with your Firebase project's configuration.
-// You can find this in your Firebase project console:
-// Project Settings > General > Your apps > Web app > Config
+// All configuration is now read from secure environment variables using Vite's required prefix.
 const firebaseConfig = {
-  apiKey: "AIzaSyA0qK2BZY-aB_Ll3fz_tzdzxOkzucY3t6M",
-  authDomain: "wordle-escrow.firebaseapp.com",
-  projectId: "wordle-escrow",
-  storageBucket: "wordle-escrow.firebasestorage.app",
-  messagingSenderId: "133728655772",
-  appId: "1:133728655772:web:c0fd394f22de012a949059"
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID
 };
 
-// This check helps guide the user to set up their config.
-export const isFirebaseConfigured = firebaseConfig.apiKey !== "YOUR_API_KEY";
+// This check helps guide the user to set up their config in the environment.
+export const isFirebaseConfigured = !!firebaseConfig.apiKey;
 
 // Initialize Firebase
 // We check if the config is populated before initializing to prevent errors.
