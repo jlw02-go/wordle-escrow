@@ -2,8 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { Group } from '../types';
 import { nanoid } from 'nanoid';
 import { db } from '../firebase';
-// FIX: Use namespace import for firestore to maintain consistency with module resolution fixes.
-import * as firestore from 'firebase/firestore';
+import { collection, query, orderBy, onSnapshot, doc, addDoc, updateDoc, deleteDoc } from 'firebase/firestore';
 
 export const useGroupData = () => {
     const [groups, setGroups] = useState<Group[]>([]);
@@ -14,8 +13,8 @@ export const useGroupData = () => {
             setLoading(false);
             return;
         }
-        const q = firestore.query(firestore.collection(db, 'groups'), firestore.orderBy('createdAt', 'asc'));
-        const unsubscribe = firestore.onSnapshot(q, (snapshot) => {
+        const q = query(collection(db, 'groups'), orderBy('createdAt', 'asc'));
+        const unsubscribe = onSnapshot(q, (snapshot) => {
             const groupsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Group));
             setGroups(groupsData);
             setLoading(false);
@@ -34,14 +33,14 @@ export const useGroupData = () => {
             players,
             createdAt: new Date().toISOString(),
         };
-        const docRef = await firestore.addDoc(firestore.collection(db, 'groups'), newGroup);
+        const docRef = await addDoc(collection(db, 'groups'), newGroup);
         return { ...newGroup, id: docRef.id };
     }, []);
 
     const updateGroup = useCallback(async (id: string, updates: Partial<Pick<Group, 'name' | 'players'>>) => {
         if (!db) return;
-        const groupDoc = firestore.doc(db, 'groups', id);
-        await firestore.updateDoc(groupDoc, updates);
+        const groupDoc = doc(db, 'groups', id);
+        await updateDoc(groupDoc, updates);
     }, []);
 
     const deleteGroup = useCallback(async (id: string) => {
@@ -49,8 +48,8 @@ export const useGroupData = () => {
         // Note: Deleting a group won't delete its subcollections (submissions) automatically.
         // This would require a more complex cloud function for a production app.
         // For this app's scope, we just delete the group doc.
-        const groupDoc = firestore.doc(db, 'groups', id);
-        await firestore.deleteDoc(groupDoc);
+        const groupDoc = doc(db, 'groups', id);
+        await deleteDoc(groupDoc);
     }, []);
     
     const getGroupById = useCallback((id: string) => {
