@@ -1,0 +1,5 @@
+{
+  "name": "Wordle Score Escrow",
+  "description": "An app to share and track Wordle scores with friends. Scores are held in 'escrow' until everyone has submitted for the day, preventing spoilers. It also tracks player statistics over time and provides a fun AI-powered summary of the day's results.",
+  "requestFramePermissions": []
+}
