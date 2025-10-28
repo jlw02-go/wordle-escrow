@@ -1,8 +1,5 @@
 import React from 'react';
-// FIX: Use namespace import for react-router-dom to resolve potential module resolution issues.
-import * as ReactRouterDOM from 'react-router-dom';
-
-const { Link } = ReactRouterDOM;
+import { Link } from 'react-router-dom';
 
 const NotFoundPage: React.FC = () => {
     return (
