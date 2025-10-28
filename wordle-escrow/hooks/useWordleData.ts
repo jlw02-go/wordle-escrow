@@ -16,8 +16,7 @@ const calculateAllPlayerStats = (data: AllSubmissions, players: string[]): AllPl
 
   players.forEach(player => {
     const playerSubmissions = Object.values(data)
-      // This is the critical fix: `submissions?.[player]` prevents the crash.
-      .map(dailyData => dailyData.submissions?.[player])
+      .map(dailyData => dailyData.submissions?.[player]) // Use optional chaining here
       .filter(Boolean)
       .sort((a, b) => a.date.localeCompare(b.date));
 
@@ -131,12 +130,30 @@ export const useWordleData = ({ group }: UseWordleDataProps) => {
         [`submissions.${submission.player}`]: submission
     };
     
+    // **THIS IS THE FIX: Optimistic UI Update**
+    // Immediately update the local state to make the UI feel instant.
+    setAllSubmissions(prev => {
+        const currentDateData = prev[date] || { submissions: {} };
+        const updatedSubmissions = {
+            ...currentDateData.submissions,
+            [submission.player]: submission
+        };
+        return {
+            ...prev,
+            [date]: {
+                ...currentDateData,
+                submissions: updatedSubmissions
+            }
+        };
+    });
+    
     try {
-      // Use set with merge to create the document if it doesn't exist,
-      // or update it if it does. This prevents overwriting other players' scores.
+      // Then, send the update to Firebase in the background.
       await setDoc(submissionDocRef, newSubmissionPayload, { merge: true });
     } catch(e) {
       console.error("Error adding submission: ", e);
+      // In a production app, you might add logic here to revert the optimistic
+      // update if the server call fails.
     }
   }, [group?.id]);
 
