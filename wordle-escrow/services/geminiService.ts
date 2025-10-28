@@ -1,39 +1,24 @@
-
-import { GoogleGenAI } from "@google/genai";
 import { DailySubmissions } from '../types';
 
 export const getDailySummary = async (submissions: DailySubmissions): Promise<string> => {
-    // Use Vite's method for accessing client-side environment variables.
-    const apiKey = import.meta.env.VITE_API_KEY;
-    if (!apiKey) {
-        throw new Error("VITE_API_KEY is not configured.");
-    }
-    const ai = new GoogleGenAI({ apiKey });
-    
-    const scoresText = Object.values(submissions)
-        .map(sub => {
-            const scoreDisplay = sub.score > 6 ? 'X/6 (Failed)' : `${sub.score}/6`;
-            return `${sub.player}: ${scoreDisplay}`;
-        })
-        .join(', ');
-
-    const prompt = `
-        You are a witty and slightly sarcastic sports commentator for the game of Wordle.
-        Analyze the following daily Wordle scores from a group of friends and provide a short, funny summary (2-3 sentences).
-        Feel free to gently roast the player with the worst score or praise the winner.
-        
-        Today's scores: ${scoresText}
-    `;
-
     try {
-        const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: prompt,
+        const response = await fetch('/.netlify/functions/getAiSummary', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ submissions }),
         });
-        
-        return response.text;
+
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.error || 'Failed to fetch summary from the server.');
+        }
+
+        const data = await response.json();
+        return data.summary;
     } catch (error) {
-        console.error("Error calling Gemini API:", error);
-        throw new Error("Failed to get summary from Gemini API.");
+        console.error("Error calling getAiSummary function:", error);
+        throw new Error("Failed to get summary from server.");
     }
 };
