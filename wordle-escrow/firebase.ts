@@ -1,6 +1,5 @@
-// FIX: Use namespace imports for Firebase to resolve potential module resolution issues.
-import * as firebaseApp from "firebase/app";
-import * as firestore from "firebase/firestore";
+import { initializeApp } from "firebase/app";
+import { getFirestore } from "firebase/firestore";
 
 // All configuration is now read from secure environment variables using Vite's required prefix.
 const firebaseConfig = {
@@ -17,7 +16,7 @@ export const isFirebaseConfigured = !!firebaseConfig.apiKey;
 
 // Initialize Firebase
 // We check if the config is populated before initializing to prevent errors.
-const app = isFirebaseConfigured ? firebaseApp.initializeApp(firebaseConfig) : null;
+const app = isFirebaseConfigured ? initializeApp(firebaseConfig) : null;
 
 // Get a Firestore instance
-export const db = isFirebaseConfigured ? firestore.getFirestore(app!) : null;
+export const db = isFirebaseConfigured ? getFirestore(app!) : null;
