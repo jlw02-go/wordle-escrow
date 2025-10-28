@@ -1,12 +1,11 @@
-// IMPORTANT: To enable Giphy integration, the GIPHY_API_KEY environment variable must be set.
-// This is configured in the environment settings, similar to the Gemini API key.
-const GIPHY_API_KEY = process.env.GIPHY_API_KEY;
+// IMPORTANT: To enable Giphy integration, the VITE_GIPHY_API_KEY environment variable must be set.
+const GIPHY_API_KEY = import.meta.env.VITE_GIPHY_API_KEY;
 
 const getRandomItem = <T,>(arr: T[]): T => arr[Math.floor(Math.random() * arr.length)];
 
 export const getGiphyUrl = async (isWinner: boolean): Promise<string | null> => {
-    if (!GIPHY_API_KEY || GIPHY_API_KEY === "your_key_here") {
-        console.error("GIPHY_API_KEY environment variable is not set.");
+    if (!GIPHY_API_KEY) {
+        console.error("VITE_GIPHY_API_KEY environment variable is not set.");
         return null;
     }
 
