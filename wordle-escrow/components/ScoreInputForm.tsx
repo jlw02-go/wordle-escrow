@@ -6,14 +6,22 @@ import { Submission, DailySubmissions } from '../types';
 import { parseWordleHeader, extractGrid } from '../utils/parsing';
 
 import { db } from '../firebase';
-import { collection, addDoc, serverTimestamp, doc, getDoc, updateDoc, arrayUnion } from 'firebase/firestore';
+import {
+  collection,
+  addDoc,
+  serverTimestamp,
+  doc,
+  setDoc,
+  arrayUnion,
+  getDoc,
+} from 'firebase/firestore';
 
 import { getDisplayName, setDisplayName as saveDisplayName } from '../utils/currentUser';
 
 interface ScoreInputFormProps {
-  addSubmission: (submission: Submission) => void;
-  todaysSubmissions: DailySubmissions;
-  players: string[];
+  addSubmission: (submission: Submission) => void;         // local state hook (noop OK)
+  todaysSubmissions: DailySubmissions;                     // can be {}
+  players: string[];                                       // roster-ish list
 }
 
 const DEFAULT_OPTIONS = ["Joe", "Pete"];
@@ -35,7 +43,7 @@ const ScoreInputForm: React.FC<ScoreInputFormProps> = ({
     return Array.from(set);
   }, [players]);
 
-  // Preselect to current saved name if present, but DO NOT lock it
+  // Preselect to saved name if available (but do NOT lock it)
   const currentUser = getDisplayName();
   const initialSelection = React.useMemo(() => {
     if (currentUser && dropdownPlayers.includes(currentUser)) return currentUser;
@@ -51,7 +59,7 @@ const ScoreInputForm: React.FC<ScoreInputFormProps> = ({
   const [submitting, setSubmitting] = React.useState(false);
 
   React.useEffect(() => {
-    // If dropdown list updates and contains currentUser, select it (still editable)
+    // If the list later contains currentUser, select it for convenience
     if (!player && currentUser && dropdownPlayers.includes(currentUser)) {
       setPlayer(currentUser);
     }
@@ -126,17 +134,19 @@ const ScoreInputForm: React.FC<ScoreInputFormProps> = ({
 
     setSubmitting(true);
     try {
-      // If they typed a new name, add to roster + remember locally
+      // If they typed a new name, create/merge the group doc so it persists
       if (useOther && chosen && db && groupId) {
         const gref = doc(db, "groups", groupId);
-        const snap = await getDoc(gref);
-        if (snap.exists()) {
-          await updateDoc(gref, { players: arrayUnion(chosen) });
-        }
+        // Ensure doc exists and add the player (no duplicates)
+        await setDoc(
+          gref,
+          { name: groupId, players: arrayUnion(chosen) } as any,
+          { merge: true }
+        );
         saveDisplayName(chosen);
       }
 
-      // Local update
+      // Local update (keeps existing page behavior)
       addSubmission(submission);
 
       // Persist to Firestore
@@ -153,13 +163,9 @@ const ScoreInputForm: React.FC<ScoreInputFormProps> = ({
 
       setSuccess(`Thanks, ${chosen}! Your score has been submitted.`);
       // Keep their name selected for convenience
-      if (!useOther) {
-        setPlayer(chosen);
-      } else {
-        setPlayer(chosen);
-        setUseOther(false);
-        setOtherName("");
-      }
+      setPlayer(chosen);
+      setUseOther(false);
+      setOtherName("");
       setShareText('');
     } catch (err: any) {
       console.error('Failed to save to Firestore:', err?.code, err?.message, err);
