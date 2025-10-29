@@ -1,4 +1,4 @@
-// src/utils/currentUser.ts
+// utils/currentUser.ts
 const KEY = "displayName";
 
 export function getDisplayName(): string {
