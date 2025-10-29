@@ -9,15 +9,15 @@ import NotFoundPage from "./pages/NotFoundPage";
 import FirebaseWrapper from "./components/FirebaseWrapper";
 
 import { logFirebaseEnv } from "./debugFirebase";
-// Optional: uncomment after you add devTest.ts per my earlier message
-// import { testWriteOnce } from "./devTest";
+import { testWriteOnce } from "./devTest"; // remove after connectivity is confirmed
 
 const App: React.FC = () => {
   useEffect(() => {
-    // Print the Firebase env values to the browser console (non-secret)
+    // Non-secret runtime check of your env values
     logFirebaseEnv();
-    // Optional: proves Firestore writes work; comment out after testing
-    // testWriteOnce().catch(console.error);
+
+    // One-time Firestore connectivity test (logs success or the exact error code)
+    testWriteOnce().catch(console.error);
   }, []);
 
   return (
