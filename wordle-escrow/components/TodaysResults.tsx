@@ -15,8 +15,6 @@ import {
   getDoc,
 } from "firebase/firestore";
 
-// Optional props for backward compatibility with GroupPage,
-// but this component now reads directly from Firestore.
 type Props = {
   todaysSubmissions?: Record<string, any>;
   allSubmitted?: boolean;
@@ -36,18 +34,15 @@ function todayISO() {
 }
 
 function chicagoDayRange(dayISO: string) {
-  // Local day window [start, end)
   const start = new Date(`${dayISO}T00:00:00`);
   const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
   return { start, end };
 }
 
 function isRevealReached(dayISO: string) {
-  // Reveal immediately for past days
   const today = todayISO();
   if (dayISO !== today) return true;
 
-  // Or after 1:00 PM America/Chicago
   const now = new Date();
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: TZ,
@@ -92,15 +87,18 @@ export default function TodaysResults(_: Props) {
         setLoading(true);
         setError(null);
 
-        // 1) Load roster (groups/{groupId}.players)
+        // 1) roster
         const gref = doc(db, "groups", groupId);
         const gsnap = await getDoc(gref);
         const players: string[] =
           gsnap.exists() && Array.isArray((gsnap.data() as any).players)
             ? (gsnap.data() as any).players.slice(0, 10)
             : [];
+        // Always coerce to array
+        const safePlayers = Array.isArray(players) ? players : [];
+        if (!cancelled) setRoster(safePlayers);
 
-        // 2) Load today's submissions for this group (with graceful index fallback)
+        // 2) submissions
         const { start, end } = chicagoDayRange(day);
         const baseFilters = [
           where("groupId", "==", groupId),
@@ -109,62 +107,63 @@ export default function TodaysResults(_: Props) {
         ];
 
         let list: SubmissionRow[] = [];
+
         try {
-          // Preferred (ordered): requires composite index groupId ASC, createdAt DESC
           const qRef = query(
             collection(db, "submissions"),
             ...baseFilters,
             orderBy("createdAt", "desc")
           );
           const snap = await getDocs(qRef);
-          list = snap.docs.map((d) => {
-            const data: any = d.data();
+          list = (snap?.docs || []).map((d) => {
+            const data: any = d.data() ?? {};
             const createdISO = data.createdAt?.toDate
               ? data.createdAt.toDate().toISOString()
               : new Date().toISOString();
             return {
               id: d.id,
-              player: data.player,
-              score: data.score,
-              puzzleNumber: data.puzzleNumber,
+              player: data.player ?? "",
+              score: data.score ?? "",
+              puzzleNumber: data.puzzleNumber ?? 0,
               createdAt: createdISO,
             };
           });
         } catch (e: any) {
-          // Index not ready? Do an unordered fallback so the UI still works.
           if (e?.code === "failed-precondition") {
             const qRef = query(collection(db, "submissions"), ...baseFilters);
             const snap = await getDocs(qRef);
-            list = snap.docs.map((d) => {
-              const data: any = d.data();
+            list = (snap?.docs || []).map((d) => {
+              const data: any = d.data() ?? {};
               const createdISO = data.createdAt?.toDate
                 ? data.createdAt.toDate().toISOString()
                 : new Date().toISOString();
               return {
                 id: d.id,
-                player: data.player,
-                score: data.score,
-                puzzleNumber: data.puzzleNumber,
+                player: data.player ?? "",
+                score: data.score ?? "",
+                puzzleNumber: data.puzzleNumber ?? 0,
                 createdAt: createdISO,
               };
             });
-            // Sort client-side as a temporary fallback
-            list.sort(
-              (a, b) =>
-                new Date(b.createdAt).getTime() -
-                new Date(a.createdAt).getTime()
-            );
+            // Defensive sort
+            if (Array.isArray(list)) {
+              list.sort(
+                (a, b) =>
+                  new Date(b.createdAt).getTime() -
+                  new Date(a.createdAt).getTime()
+              );
+            }
           } else {
-            throw e; // bubble up any other error to the outer catch
+            throw e;
           }
         }
 
         if (!cancelled) {
-          setRoster(players);
-          setRows(list);
+          const safeList = Array.isArray(list) ? list : [];
+          setRows(safeList);
         }
       } catch (e) {
-        console.error(e);
+        console.error("[TodaysResults] load error:", e);
         if (!cancelled) setError("Couldn’t load results.");
       } finally {
         if (!cancelled) setLoading(false);
@@ -177,12 +176,16 @@ export default function TodaysResults(_: Props) {
     };
   }, [groupId, day]);
 
-  const submittedBy = useMemo(
-    () => new Set(rows.map((r) => (r.player || "").toLowerCase())),
-    [rows]
-  );
+  const submittedBy = useMemo(() => {
+    const list = Array.isArray(rows) ? rows : [];
+    return new Set(list.map((r) => (r.player || "").toLowerCase()));
+  }, [rows]);
+
   const allSubmitted =
-    roster.length > 0 && roster.every((p) => submittedBy.has(p.toLowerCase()));
+    Array.isArray(roster) &&
+    roster.length > 0 &&
+    roster.every((p) => submittedBy.has((p || "").toLowerCase()));
+
   const reveal = allSubmitted || isRevealReached(day);
 
   if (!groupId) return null;
@@ -200,17 +203,18 @@ export default function TodaysResults(_: Props) {
           <p className="mb-2 text-sm text-gray-600">
             Results are hidden until all players submit or 1:00 PM America/Chicago.
           </p>
-          {roster.length === 0 ? (
+          {(!Array.isArray(roster) || roster.length === 0) ? (
             <p className="text-sm text-gray-500">
               No players are in this group yet. Join the group to get started.
             </p>
           ) : (
             <ul className="space-y-2">
               {roster.map((p) => {
-                const done = submittedBy.has(p.toLowerCase());
+                const name = p || "";
+                const done = submittedBy.has(name.toLowerCase());
                 return (
-                  <li key={p} className="flex items-center justify-between">
-                    <span className="font-medium">{p}</span>
+                  <li key={name} className="flex items-center justify-between">
+                    <span className="font-medium">{name}</span>
                     {done ? (
                       <span className="text-green-600 text-sm">submitted</span>
                     ) : (
@@ -224,7 +228,7 @@ export default function TodaysResults(_: Props) {
         </div>
       ) : (
         <>
-          {rows.length === 0 ? (
+          {(!Array.isArray(rows) || rows.length === 0) ? (
             <p className="mt-3 text-sm text-gray-500">No results yet for today.</p>
           ) : (
             <ul className="mt-3 space-y-3">
