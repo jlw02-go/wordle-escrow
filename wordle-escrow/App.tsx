@@ -9,15 +9,11 @@ import NotFoundPage from "./pages/NotFoundPage";
 import FirebaseWrapper from "./components/FirebaseWrapper";
 
 import { logFirebaseEnv } from "./debugFirebase";
-import { testWriteOnce } from "./devTest"; // remove after connectivity is confirmed
 
 const App: React.FC = () => {
   useEffect(() => {
-    // Non-secret runtime check of your env values
+    // Optional: keep this during development to verify Firebase env vars
     logFirebaseEnv();
-
-    // One-time Firestore connectivity test (logs success or the exact error code)
-    testWriteOnce().catch(console.error);
   }, []);
 
   return (
