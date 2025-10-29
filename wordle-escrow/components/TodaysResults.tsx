@@ -1,5 +1,5 @@
-// src/components/TodayResults.tsx
-import { useTodayResults } from "@/hooks/useTodayResults";
+// components/TodaysResults.tsx
+import { useTodayResults } from "../hooks/useTodayResults";
 
 export default function TodayResults() {
   const { data, isLoading, error, day } = useTodayResults();
@@ -39,3 +39,4 @@ export default function TodayResults() {
     </section>
   );
 }
+
