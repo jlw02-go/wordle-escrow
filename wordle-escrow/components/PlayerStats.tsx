@@ -1,27 +1,31 @@
 // components/PlayerStats.tsx
 import React, { useMemo } from "react";
 
+/**
+ * Flexible shape to match whatever your aggregator returns.
+ * If your real field names differ, tell me the exact shape from the console
+ * and I’ll align it in one pass.
+ */
 type PlayerStatsRecord = {
   gamesPlayed?: number;   // total games counted
   totalScore?: number;    // sum of scores (lower is better)
-  avgScore?: number;      // average score (derived if missing)
-  wins?: number;          // number of day-wins
+  avgScore?: number;      // average score (derived here if missing)
+  wins?: number;          // # of day-wins
   bestStreak?: number;    // optional
   currentStreak?: number; // optional
 };
 
 interface Props {
   stats: Record<string, PlayerStatsRecord> | undefined;
-  players: string[]; // the roster we intend to show
+  players: string[];
 }
 
 const PlayerStats: React.FC<Props> = ({ stats, players }) => {
-  // Debug: see what we actually received
-  // (Open DevTools → Console to view this once after reload)
+  // Debug once per render so we can see exactly what's arriving
+  // Open DevTools → Console to view
   // eslint-disable-next-line no-console
   console.log("[PlayerStats] props:", { players, stats });
 
-  // Normalize rows so we always render something for each roster player
   const rows = useMemo(() => {
     const safeStats = stats || {};
     const list = (players || []).map((p) => {
@@ -48,18 +52,20 @@ const PlayerStats: React.FC<Props> = ({ stats, players }) => {
       };
     });
 
-    // Example sort: best average first, then more games
+    // Sort: players with games first, best average asc, then more games
     list.sort((a, b) => {
-      if (a.games === 0 && b.games === 0) return a.player.localeCompare(b.player);
-      if (a.games === 0) return 1;
-      if (b.games === 0) return -1;
-      if (a.avg !== b.avg) return a.avg - b.avg; // lower avg is better
-      return b.games - a.games;
+      const aHas = a.games > 0 ? 1 : 0;
+      const bHas = b.games > 0 ? 1 : 0;
+      if (aHas !== bHas) return bHas - aHas; // any games come first
+      if (a.avg !== b.avg) return a.avg - b.avg; // lower avg better
+      if (a.games !== b.games) return b.games - a.games;
+      return a.player.localeCompare(b.player);
     });
 
     return list;
   }, [players, stats]);
 
+  const hasAnyPlayers = (players || []).length > 0;
   const hasAnyGames = rows.some((r) => r.games > 0);
 
   return (
@@ -68,7 +74,7 @@ const PlayerStats: React.FC<Props> = ({ stats, players }) => {
         Player Statistics
       </h3>
 
-      {!players?.length ? (
+      {!hasAnyPlayers ? (
         <p className="text-sm text-gray-400">No players yet.</p>
       ) : !hasAnyGames ? (
         <p className="text-sm text-gray-400">
@@ -95,8 +101,8 @@ const PlayerStats: React.FC<Props> = ({ stats, players }) => {
                   <td className="py-2 pr-4">
                     {r.games > 0 ? r.avg.toFixed(2) : "—"}
                   </td>
-                  <td className="py-2 pr-4">{r.total || 0}</td>
-                  <td className="py-2 pr-4">{r.wins || 0}</td>
+                  <td className="py-2 pr-4">{r.total}</td>
+                  <td className="py-2 pr-4">{r.wins}</td>
                   <td className="py-2 pr-4">
                     {r.currentStreak ?? 0}
                     {typeof r.bestStreak === "number" &&
