@@ -1,6 +1,6 @@
 // pages/GroupPage.tsx
-import React, { useEffect, useState } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import React, { useEffect, useMemo, useState } from 'react';
+import { useParams, Link, useLocation } from 'react-router-dom';
 
 import ScoreInputForm from '../components/ScoreInputForm';
 import TodaysResults from '../components/TodaysResults';
@@ -13,7 +13,6 @@ import GiphyDisplay from '../components/GiphyDisplay';
 import { useWordleData } from '../hooks/useWordleData';
 import { useRevealStatus } from '../hooks/useRevealStatus';
 
-// Firestore (read-only here; we don't seed anything)
 import { db } from '../firebase';
 import { doc, getDoc } from 'firebase/firestore';
 
@@ -26,67 +25,84 @@ function todayISO() {
   return fmt.format(new Date());
 }
 
+// Minimal error boundary so broken children don't fail silently
+class SafeBox extends React.Component<
+  { title: string; children: React.ReactNode },
+  { hasError: boolean; msg?: string }
+> {
+  constructor(props: any) {
+    super(props);
+    this.state = { hasError: false };
+  }
+  static getDerivedStateFromError(err: any) {
+    return { hasError: true, msg: String(err?.message || err) };
+  }
+  componentDidCatch(err: any, info: any) {
+    // Also log to console for details
+    // eslint-disable-next-line no-console
+    console.error(`[SafeBox:${this.props.title}]`, err, info);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="rounded-md border border-red-500/40 bg-red-500/10 p-3 text-sm">
+          <div className="font-semibold">Error in {this.props.title}</div>
+          <div className="opacity-80 break-words">{this.state.msg}</div>
+        </div>
+      );
+    }
+    return this.props.children as any;
+  }
+}
+
 const GroupPage: React.FC = () => {
   const { groupId } = useParams<{ groupId: string }>();
-  const [groupTitle, setGroupTitle] = useState<string>('Wordle Score Escrow');
+  const location = useLocation();
 
-  // ------- Roster (read if present, else Joe/Pete) -------
+  // Title is fixed per your request
+  const groupTitle = 'Wordle Escrow';
+  const showSubtitle = false;
+  const subtitle = useMemo(() => (groupId ? `Group: ${groupId}` : ''), [groupId]);
+
+  // Roster (read if present; union with Joe/Pete)
   const [players, setPlayers] = useState<string[]>(DEFAULT_PLAYERS);
   const [loadingRoster, setLoadingRoster] = useState(true);
   const [rosterError, setRosterError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-
     (async () => {
       try {
         if (!db || !groupId) {
-          if (!cancelled) {
-            setPlayers(DEFAULT_PLAYERS);
-            setGroupTitle('Wordle Score Escrow');
-          }
+          if (!cancelled) setPlayers(DEFAULT_PLAYERS);
           return;
         }
         const gref = doc(db, 'groups', groupId);
         const snap = await getDoc(gref);
-
-        if (snap.exists()) {
-          const data = snap.data() as any;
-          const list: string[] = Array.isArray(data.players) ? data.players : [];
-          const merged = Array.from(new Set([...DEFAULT_PLAYERS, ...list])).slice(0, 10);
-          if (!cancelled) setPlayers(merged);
-
-          const name = (data && typeof data.name === 'string' && data.name.trim()) ? data.name.trim() : '';
-          if (!cancelled) {
-            setGroupTitle(name || 'Wordle Score Escrow');
-          }
-        } else {
-          if (!cancelled) {
-            setPlayers(DEFAULT_PLAYERS);
-            setGroupTitle('Wordle Score Escrow');
-          }
-        }
+        const list: string[] =
+          snap.exists() && Array.isArray((snap.data() as any).players)
+            ? (snap.data() as any).players
+            : [];
+        const merged = Array.from(new Set([...DEFAULT_PLAYERS, ...list])).slice(0, 10);
+        if (!cancelled) setPlayers(merged);
       } catch (e: any) {
-        console.error('[GroupPage] roster/name load:', e?.message || e);
+        console.error('[GroupPage] roster load:', e?.message || e);
         if (!cancelled) {
-          setRosterError("Couldn't load group info.");
-          setPlayers(DEFAULT_PLAYERS); // safe fallback
-          setGroupTitle('Wordle Score Escrow');
+          setRosterError("Couldn't load group roster.");
+          setPlayers(DEFAULT_PLAYERS);
         }
       } finally {
         if (!cancelled) setLoadingRoster(false);
       }
     })();
-
     return () => { cancelled = true; };
   }, [groupId]);
 
-  // ------- Core data (history, today map, stats, etc.) -------
-  // Provide a minimal group object so the hook has an id/name to key off
+  // Core data
+  const today = todayISO();
   const fakeGroup = groupId ? ({ id: groupId, name: groupTitle } as any) : undefined;
   const {
     stats,
-    today,
     todaysSubmissions,
     allSubmissions,
     addSubmission,
@@ -94,14 +110,13 @@ const GroupPage: React.FC = () => {
     loading: wordleDataLoading,
   } = useWordleData({ group: fakeGroup });
 
-  // ------- Reveal logic (all submitted or 1:00 PM CT) -------
+  // Reveal logic + debug override
   const { reveal } = useRevealStatus(groupId);
+  const forceReveal = new URLSearchParams(location.search).get('reveal') === '1';
+  const showReveal = forceReveal || reveal;
 
-  // ------- Tabs -------
+  // Tabs
   const [view, setView] = useState<'today' | 'history' | 'h2h'>('today');
-
-  // ------- Header helpers -------
-  const subtitle = groupId ? `Group: ${groupId}` : undefined;
 
   return (
     <div className="min-h-screen bg-wordle-dark text-wordle-light font-sans p-2 sm:p-6 lg:p-8">
@@ -109,7 +124,7 @@ const GroupPage: React.FC = () => {
         <header className="text-center mb-8">
           <h1 className="text-4xl sm:text-5xl font-bold tracking-wider uppercase">{groupTitle}</h1>
           <div className="flex flex-col items-center gap-1 mt-2">
-            {subtitle && (
+            {showSubtitle && subtitle && (
               <span className="text-xs uppercase tracking-wider text-gray-400 bg-gray-800/60 px-2 py-1 rounded">
                 {subtitle}
               </span>
@@ -140,38 +155,68 @@ const GroupPage: React.FC = () => {
           </nav>
         </div>
 
-        {/* Loading overlays */}
-        {(loadingRoster || wordleDataLoading) && (
-          <p className="text-center">Loading...</p>
+        {(loadingRoster || wordleDataLoading) && <p className="text-center">Loading...</p>}
+
+        {/* Debug panel only when ?reveal=1 */}
+        {forceReveal && (
+          <div className="mx-auto mb-6 max-w-3xl rounded-md border border-yellow-400/30 bg-yellow-400/10 p-3 text-sm">
+            <div className="font-semibold">Debug mode (reveal=1)</div>
+            <div className="opacity-80">
+              showReveal: {String(showReveal)} • forceReveal: {String(forceReveal)} • realReveal: {String(reveal)}
+            </div>
+            <div className="opacity-80">
+              players: {players.join(', ') || '(none)'} • today: {today}
+            </div>
+            <div className="opacity-80">
+              submissions today: {Object.keys(todaysSubmissions || {}).length}
+            </div>
+          </div>
         )}
 
-        {/* TODAY VIEW */}
+        {/* TODAY */}
         {!loadingRoster && !wordleDataLoading && view === 'today' && (
           <main className="grid grid-cols-1 lg:grid-cols-3 gap-8">
             <div className="lg:col-span-2 space-y-8">
-              {/* Submit form: ALWAYS shows Joe, Pete, and Other… (Option A) */}
               <ScoreInputForm
                 addSubmission={addSubmission}
                 todaysSubmissions={todaysSubmissions}
                 players={players}
               />
 
-              {/* Today’s results:
-                  - shows “awaiting submission / submitted”
-                  - hides grid until all submitted or 1pm
-                  - fetches from Firestore itself */}
+              {/* Shows submitted/awaiting, hides grids until reveal */}
               <TodaysResults players={players} />
 
-              {/* Reveal-gated extras */}
-              {reveal && (
+              {/* Normal: only show when revealed */}
+              {showReveal && !forceReveal && (
                 <>
-                  <AiSummary
-                    todaysSubmissions={todaysSubmissions}
-                    saveAiSummary={(text: string) => saveAiSummary(today, text)}
-                    today={today}
-                    existingSummary={allSubmissions[today]?.aiSummary}
-                  />
-                  <GiphyDisplay todaysSubmissions={todaysSubmissions} />
+                  <SafeBox title="AiSummary">
+                    <AiSummary
+                      todaysSubmissions={todaysSubmissions}
+                      saveAiSummary={(text: string) => saveAiSummary(today, text)}
+                      today={today}
+                      existingSummary={allSubmissions[today]?.aiSummary}
+                    />
+                  </SafeBox>
+                  <SafeBox title="GiphyDisplay">
+                    <GiphyDisplay todaysSubmissions={todaysSubmissions} />
+                  </SafeBox>
+                </>
+              )}
+
+              {/* Debug override: force-mount even if internal conditions would hide */}
+              {forceReveal && (
+                <>
+                  <SafeBox title="AiSummary (forced)">
+                    <AiSummary
+                      todaysSubmissions={todaysSubmissions}
+                      saveAiSummary={(text: string) => saveAiSummary(today, text)}
+                      today={today}
+                      existingSummary={allSubmissions[today]?.aiSummary}
+                    />
+                  </SafeBox>
+                  <SafeBox title="GiphyDisplay (forced)">
+                    <GiphyDisplay todaysSubmissions={todaysSubmissions} />
+                  </SafeBox>
                 </>
               )}
             </div>
@@ -182,12 +227,12 @@ const GroupPage: React.FC = () => {
           </main>
         )}
 
-        {/* HISTORY VIEW */}
+        {/* HISTORY */}
         {!loadingRoster && !wordleDataLoading && view === 'history' && (
           <GameHistory allSubmissions={allSubmissions} today={today} players={players} />
         )}
 
-        {/* HEAD-TO-HEAD VIEW */}
+        {/* H2H */}
         {!loadingRoster && !wordleDataLoading && view === 'h2h' && (
           <HeadToHeadStats allSubmissions={allSubmissions} players={players} />
         )}
