@@ -1,9 +1,12 @@
 // components/TodaysResults.tsx
+import { useParams } from "react-router-dom";
 import { useTodayResults } from "../hooks/useTodayResults";
 
-export default function TodayResults() {
-  const { data, isLoading, error, day } = useTodayResults();
+export default function TodaysResults() {
+  const { groupId } = useParams(); // from /group/:groupId route
+  const { data, isLoading, error, day } = useTodayResults(groupId!);
 
+  if (!groupId) return null;
   if (isLoading) return <div>Loading Today’s Results…</div>;
   if (error) return <div role="alert">Couldn’t load results.</div>;
 
@@ -22,13 +25,11 @@ export default function TodayResults() {
                 <strong>{r.playerA} vs {r.playerB}</strong>
                 <span>{r.scoreA}–{r.scoreB}</span>
               </div>
-
               {r.gifUrl && (
                 <figure className="mt-2">
                   <img src={r.gifUrl} alt={r.gifAlt ?? "Selected GIF"} className="max-h-64 w-auto" />
                 </figure>
               )}
-
               <div className="mt-1 text-xs text-gray-500">
                 Submitted {new Date(r.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
               </div>
@@ -39,4 +40,3 @@ export default function TodayResults() {
     </section>
   );
 }
-
