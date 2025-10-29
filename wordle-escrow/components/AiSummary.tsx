@@ -9,6 +9,11 @@ interface AiSummaryProps {
     existingSummary?: string;
 }
 
+console.log("[DEBUG] Keys check →", {
+  gemini: !!import.meta.env.VITE_GEMINI_API_KEY,
+  giphy: !!import.meta.env.VITE_GIPHY_API_KEY,
+});
+
 const AiSummary: React.FC<AiSummaryProps> = ({ todaysSubmissions, saveAiSummary, today, existingSummary }) => {
     const [summary, setSummary] = useState<string>(existingSummary || '');
     const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -72,5 +77,6 @@ const AiSummary: React.FC<AiSummaryProps> = ({ todaysSubmissions, saveAiSummary,
         </div>
     );
 };
+
 
 export default AiSummary;
