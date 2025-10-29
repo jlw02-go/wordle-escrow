@@ -1,52 +1,40 @@
-// src/components/JoinGroup.tsx
+// components/JoinGroup.tsx
 import React, { useState } from "react";
 import { useParams } from "react-router-dom";
 import { db } from "../firebase";
 import { doc, getDoc, setDoc, updateDoc, arrayUnion } from "firebase/firestore";
 import { getDisplayName, setDisplayName } from "../utils/currentUser";
 
-type Props = {
-  maxPlayers?: number; // default 10
-};
+type Props = { maxPlayers?: number };
 
 export default function JoinGroup({ maxPlayers = 10 }: Props) {
   const { groupId } = useParams();
   const [name, setName] = useState(getDisplayName());
-  const [status, setStatus] = useState<string>("");
+  const [status, setStatus] = useState("");
 
   async function onJoin(e: React.FormEvent) {
     e.preventDefault();
     setStatus("");
-    const n = name.trim();
-    if (!n) {
-      setStatus("Please enter a name.");
-      return;
-    }
-    if (!db || !groupId) {
-      setStatus("Problem connecting. Try again.");
-      return;
-    }
+    const n = (name || "").trim();
+    if (!n) return setStatus("Please enter a name.");
+    if (!db || !groupId) return setStatus("Problem connecting. Try again.");
 
     const gref = doc(db, "groups", groupId);
     const snap = await getDoc(gref);
 
     if (!snap.exists()) {
-      // Create the group with the first player
       await setDoc(gref, { name: groupId, players: [n] });
     } else {
       const data = snap.data() as any;
       const players: string[] = Array.isArray(data.players) ? data.players : [];
       if (players.length >= maxPlayers && !players.includes(n)) {
-        setStatus(`This group already has ${players.length}/${maxPlayers} players.`);
-        return;
+        return setStatus(`This group already has ${players.length}/${maxPlayers} players.`);
       }
-      // arrayUnion avoids duplicates automatically (exact string match)
-      await updateDoc(gref, { players: arrayUnion(n) });
+      await updateDoc(gref, { players: arrayUnion(n) }); // dedup
     }
 
     setDisplayName(n);
     setStatus("Joined! You can submit your score now.");
-    // Optional: reload to let any parent hooks refetch
     setTimeout(() => window.location.reload(), 500);
   }
 
@@ -62,9 +50,7 @@ export default function JoinGroup({ maxPlayers = 10 }: Props) {
         onChange={(e) => setName(e.target.value)}
         maxLength={40}
       />
-      <button type="submit" className="rounded bg-blue-600 px-4 py-2 text-white">
-        Join group
-      </button>
+      <button type="submit" className="rounded bg-blue-600 px-4 py-2 text-white">Join group</button>
       {status && <div className="mt-2 text-sm">{status}</div>}
     </form>
   );
