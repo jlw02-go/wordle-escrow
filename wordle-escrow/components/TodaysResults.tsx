@@ -90,15 +90,14 @@ export default function TodaysResults(_: Props) {
         // 1) roster
         const gref = doc(db, "groups", groupId);
         const gsnap = await getDoc(gref);
-        const players: string[] =
+        const playersMaybe =
           gsnap.exists() && Array.isArray((gsnap.data() as any).players)
-            ? (gsnap.data() as any).players.slice(0, 10)
+            ? (gsnap.data() as any).players
             : [];
-        // Always coerce to array
-        const safePlayers = Array.isArray(players) ? players : [];
+        const safePlayers: string[] = Array.isArray(playersMaybe) ? playersMaybe.slice(0, 10) : [];
         if (!cancelled) setRoster(safePlayers);
 
-        // 2) submissions
+        // 2) submissions (with index fallback; NO client-side sort)
         const { start, end } = chicagoDayRange(day);
         const baseFilters = [
           where("groupId", "==", groupId),
@@ -145,25 +144,16 @@ export default function TodaysResults(_: Props) {
                 createdAt: createdISO,
               };
             });
-            // Defensive sort
-            if (Array.isArray(list)) {
-              list.sort(
-                (a, b) =>
-                  new Date(b.createdAt).getTime() -
-                  new Date(a.createdAt).getTime()
-              );
-            }
           } else {
             throw e;
           }
         }
 
         if (!cancelled) {
-          const safeList = Array.isArray(list) ? list : [];
-          setRows(safeList);
+          setRows(Array.isArray(list) ? list : []);
         }
       } catch (e) {
-        console.error("[TodaysResults] load error:", e);
+        console.error("[TodaysResults] load error:", e?.message || e);
         if (!cancelled) setError("Couldn’t load results.");
       } finally {
         if (!cancelled) setLoading(false);
