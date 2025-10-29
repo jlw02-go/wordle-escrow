@@ -13,7 +13,7 @@ import { getDisplayName, setDisplayName as saveDisplayName } from '../utils/curr
 interface ScoreInputFormProps {
   addSubmission: (submission: Submission) => void;
   todaysSubmissions: DailySubmissions;
-  players: string[]; // may be undefined at runtime; we’ll guard
+  players: string[];
 }
 
 const DEFAULT_OPTIONS = ["Joe", "Pete"];
@@ -25,39 +25,41 @@ const ScoreInputForm: React.FC<ScoreInputFormProps> = ({
   players,
 }) => {
   const { groupId } = useParams();
-  const currentUser = getDisplayName();
 
-  const safePlayers = Array.isArray(players) ? players : [];
-
+  // Build dropdown list: always include Joe/Pete + unique players from props
   const dropdownPlayers = React.useMemo(() => {
     const set = new Set<string>(DEFAULT_OPTIONS);
-    for (const p of safePlayers) set.add(p);
+    if (Array.isArray(players)) {
+      for (const p of players) if (p) set.add(p);
+    }
     return Array.from(set);
-  }, [safePlayers]);
+  }, [players]);
 
-  const isCurrentUserInList = React.useMemo(
-    () => !!currentUser && dropdownPlayers.includes(currentUser),
-    [dropdownPlayers, currentUser]
-  );
+  // Preselect to current saved name if present, but DO NOT lock it
+  const currentUser = getDisplayName();
+  const initialSelection = React.useMemo(() => {
+    if (currentUser && dropdownPlayers.includes(currentUser)) return currentUser;
+    return "";
+  }, [currentUser, dropdownPlayers]);
 
-  const [player, setPlayer] = React.useState<string>(isCurrentUserInList ? currentUser : "");
-  const [otherName, setOtherName] = React.useState<string>("");
+  const [player, setPlayer] = React.useState<string>(initialSelection);
+  const [useOther, setUseOther] = React.useState(false);
+  const [otherName, setOtherName] = React.useState("");
   const [shareText, setShareText] = React.useState('');
   const [error, setError] = React.useState('');
   const [success, setSuccess] = React.useState('');
   const [submitting, setSubmitting] = React.useState(false);
-  const [useOther, setUseOther] = React.useState(false);
 
   React.useEffect(() => {
-    if (isCurrentUserInList) {
+    // If dropdown list updates and contains currentUser, select it (still editable)
+    if (!player && currentUser && dropdownPlayers.includes(currentUser)) {
       setPlayer(currentUser);
-      setUseOther(false);
-      setOtherName("");
     }
-  }, [isCurrentUserInList, currentUser]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dropdownPlayers, currentUser]);
 
   const effectiveName = (useOther ? otherName : player).trim();
-  const alreadySubmitted = effectiveName && todaysSubmissions && (todaysSubmissions as any)[effectiveName];
+  const alreadySubmitted = effectiveName && (todaysSubmissions as any)?.[effectiveName];
 
   const onPlayerChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const val = e.target.value;
@@ -76,7 +78,7 @@ const ScoreInputForm: React.FC<ScoreInputFormProps> = ({
     setError('');
     setSuccess('');
 
-    const chosen = effectiveName;
+    const chosen = (useOther ? otherName : player).trim();
     const text = (shareText || '').trim();
 
     if (!chosen) {
@@ -124,6 +126,7 @@ const ScoreInputForm: React.FC<ScoreInputFormProps> = ({
 
     setSubmitting(true);
     try {
+      // If they typed a new name, add to roster + remember locally
       if (useOther && chosen && db && groupId) {
         const gref = doc(db, "groups", groupId);
         const snap = await getDoc(gref);
@@ -133,8 +136,10 @@ const ScoreInputForm: React.FC<ScoreInputFormProps> = ({
         saveDisplayName(chosen);
       }
 
+      // Local update
       addSubmission(submission);
 
+      // Persist to Firestore
       if (!db) throw new Error('Firestore not initialized');
       await addDoc(collection(db, 'submissions'), {
         groupId: groupId ?? 'default',
@@ -147,13 +152,13 @@ const ScoreInputForm: React.FC<ScoreInputFormProps> = ({
       });
 
       setSuccess(`Thanks, ${chosen}! Your score has been submitted.`);
-      if (isCurrentUserInList) {
-        setPlayer(currentUser);
+      // Keep their name selected for convenience
+      if (!useOther) {
+        setPlayer(chosen);
+      } else {
+        setPlayer(chosen);
         setUseOther(false);
         setOtherName("");
-      } else {
-        setPlayer("");
-        if (!useOther) setOtherName("");
       }
       setShareText('');
     } catch (err: any) {
@@ -173,46 +178,38 @@ const ScoreInputForm: React.FC<ScoreInputFormProps> = ({
       <form onSubmit={onSubmit} className="space-y-4">
         {/* Player select */}
         <div>
-          <label htmlFor="player-select" className="block text-sm font-medium text-gray-300 mb-1">
+          <label
+            htmlFor="player-select"
+            className="block text-sm font-medium text-gray-300 mb-1"
+          >
             Player
           </label>
 
-          {isCurrentUserInList ? (
+          <select
+            id="player-select"
+            value={useOther ? OTHER_VALUE : player}
+            onChange={onPlayerChange}
+            className="w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-wordle-green"
+          >
+            <option value="" disabled>Select your name</option>
+            {dropdownPlayers.map((p) => (
+              <option key={p} value={p}>{p}</option>
+            ))}
+            <option value={OTHER_VALUE}>Other… (add your name)</option>
+          </select>
+
+          {useOther && (
             <input
               type="text"
-              value={currentUser}
-              disabled
-              className="w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-white opacity-80"
+              value={otherName}
+              onChange={(e) => setOtherName(e.target.value)}
+              placeholder="Enter your name"
+              className="mt-2 w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-wordle-green"
+              maxLength={40}
             />
-          ) : (
-            <>
-              <select
-                id="player-select"
-                value={useOther ? OTHER_VALUE : player}
-                onChange={onPlayerChange}
-                className="w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-wordle-green"
-              >
-                <option value="" disabled>Select your name</option>
-                {dropdownPlayers.map((p) => (
-                  <option key={p} value={p}>{p}</option>
-                ))}
-                <option value={OTHER_VALUE}>Other… (add your name)</option>
-              </select>
-
-              {useOther && (
-                <input
-                  type="text"
-                  value={otherName}
-                  onChange={(e) => setOtherName(e.target.value)}
-                  placeholder="Enter your name"
-                  className="mt-2 w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-wordle-green"
-                  maxLength={40}
-                />
-              )}
-            </>
           )}
 
-          {!isCurrentUserInList && effectiveName && (todaysSubmissions as any)?.[effectiveName] && (
+          {effectiveName && (todaysSubmissions as any)?.[effectiveName] && (
             <p className="mt-1 text-xs text-gray-400">
               {effectiveName} has already submitted today.
             </p>
@@ -221,7 +218,10 @@ const ScoreInputForm: React.FC<ScoreInputFormProps> = ({
 
         {/* Wordle paste box */}
         <div>
-          <label htmlFor="share-text" className="block text-sm font-medium text-gray-300 mb-1">
+          <label
+            htmlFor="share-text"
+            className="block text-sm font-medium text-gray-300 mb-1"
+          >
             Paste Wordle Score
           </label>
           <textarea
