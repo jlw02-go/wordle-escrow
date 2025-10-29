@@ -1,3 +1,4 @@
+// components/TodaysResults.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 
@@ -14,7 +15,7 @@ import {
   getDoc,
 } from "firebase/firestore";
 
-// Optional props kept for backward compatibility with your GroupPage,
+// Optional props kept for backward compatibility with GroupPage,
 // but this component now drives from Firestore directly.
 type Props = {
   todaysSubmissions?: Record<string, any>;
@@ -35,18 +36,18 @@ function todayISO() {
 }
 
 function chicagoDayRange(dayISO: string) {
-  // Construct a local day window [start, end) in local time.
+  // Local day window [start, end)
   const start = new Date(`${dayISO}T00:00:00`);
   const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
   return { start, end };
 }
 
 function isRevealReached(dayISO: string) {
-  // Reveal if not today (past days always visible)
+  // Reveal immediately for past days
   const today = todayISO();
   if (dayISO !== today) return true;
 
-  // Or after 1:00 PM America/Chicago on the same day
+  // Or after 1:00 PM America/Chicago
   const now = new Date();
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: TZ,
@@ -94,9 +95,10 @@ export default function TodaysResults(_: Props) {
         // 1) Load roster (groups/{groupId}.players)
         const gref = doc(db, "groups", groupId);
         const gsnap = await getDoc(gref);
-        const players: string[] = gsnap.exists() && Array.isArray((gsnap.data() as any).players)
-          ? (gsnap.data() as any).players.slice(0, 10)
-          : [];
+        const players: string[] =
+          gsnap.exists() && Array.isArray((gsnap.data() as any).players)
+            ? (gsnap.data() as any).players.slice(0, 10)
+            : [];
 
         // 2) Load today's submissions for this group
         const { start, end } = chicagoDayRange(day);
@@ -144,7 +146,8 @@ export default function TodaysResults(_: Props) {
     () => new Set(rows.map((r) => (r.player || "").toLowerCase())),
     [rows]
   );
-  const allSubmitted = roster.length > 0 && roster.every((p) => submittedBy.has(p.toLowerCase()));
+  const allSubmitted =
+    roster.length > 0 && roster.every((p) => submittedBy.has(p.toLowerCase()));
   const reveal = allSubmitted || isRevealReached(day);
 
   if (!groupId) return null;
@@ -163,4 +166,52 @@ export default function TodaysResults(_: Props) {
             Results are hidden until all players submit or 1:00 PM America/Chicago.
           </p>
           {roster.length === 0 ? (
-            <p class
+            <p className="text-sm text-gray-500">
+              No players are in this group yet. Join the group to get started.
+            </p>
+          ) : (
+            <ul className="space-y-2">
+              {roster.map((p) => {
+                const done = submittedBy.has(p.toLowerCase());
+                return (
+                  <li key={p} className="flex items-center justify-between">
+                    <span className="font-medium">{p}</span>
+                    {done ? (
+                      <span className="text-green-600 text-sm">submitted</span>
+                    ) : (
+                      <span className="text-gray-500 text-sm">awaiting submission</span>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+      ) : (
+        <>
+          {rows.length === 0 ? (
+            <p className="mt-3 text-sm text-gray-500">No results yet for today.</p>
+          ) : (
+            <ul className="mt-3 space-y-3">
+              {rows.map((r) => (
+                <li key={r.id} className="rounded-lg border p-3">
+                  <div className="flex items-center justify-between">
+                    <strong>{r.player}</strong>
+                    <span>Score: {r.score}</span>
+                  </div>
+                  <div className="mt-1 text-xs text-gray-500">
+                    Wordle #{r.puzzleNumber} • Submitted{" "}
+                    {new Date(r.createdAt).toLocaleTimeString([], {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
