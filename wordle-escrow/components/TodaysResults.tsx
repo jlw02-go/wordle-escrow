@@ -15,8 +15,8 @@ import {
   getDoc,
 } from "firebase/firestore";
 
-// Optional props kept for backward compatibility with GroupPage,
-// but this component now drives from Firestore directly.
+// Optional props for backward compatibility with GroupPage,
+// but this component now reads directly from Firestore.
 type Props = {
   todaysSubmissions?: Record<string, any>;
   allSubmitted?: boolean;
@@ -100,29 +100,64 @@ export default function TodaysResults(_: Props) {
             ? (gsnap.data() as any).players.slice(0, 10)
             : [];
 
-        // 2) Load today's submissions for this group
+        // 2) Load today's submissions for this group (with graceful index fallback)
         const { start, end } = chicagoDayRange(day);
-        const qRef = query(
-          collection(db, "submissions"),
+        const baseFilters = [
           where("groupId", "==", groupId),
           where("createdAt", ">=", Timestamp.fromDate(start)),
           where("createdAt", "<", Timestamp.fromDate(end)),
-          orderBy("createdAt", "desc")
-        );
-        const snap = await getDocs(qRef);
-        const list: SubmissionRow[] = snap.docs.map((d) => {
-          const data: any = d.data();
-          const createdISO = data.createdAt?.toDate
-            ? data.createdAt.toDate().toISOString()
-            : new Date().toISOString();
-          return {
-            id: d.id,
-            player: data.player,
-            score: data.score,
-            puzzleNumber: data.puzzleNumber,
-            createdAt: createdISO,
-          };
-        });
+        ];
+
+        let list: SubmissionRow[] = [];
+        try {
+          // Preferred (ordered): requires composite index groupId ASC, createdAt DESC
+          const qRef = query(
+            collection(db, "submissions"),
+            ...baseFilters,
+            orderBy("createdAt", "desc")
+          );
+          const snap = await getDocs(qRef);
+          list = snap.docs.map((d) => {
+            const data: any = d.data();
+            const createdISO = data.createdAt?.toDate
+              ? data.createdAt.toDate().toISOString()
+              : new Date().toISOString();
+            return {
+              id: d.id,
+              player: data.player,
+              score: data.score,
+              puzzleNumber: data.puzzleNumber,
+              createdAt: createdISO,
+            };
+          });
+        } catch (e: any) {
+          // Index not ready? Do an unordered fallback so the UI still works.
+          if (e?.code === "failed-precondition") {
+            const qRef = query(collection(db, "submissions"), ...baseFilters);
+            const snap = await getDocs(qRef);
+            list = snap.docs.map((d) => {
+              const data: any = d.data();
+              const createdISO = data.createdAt?.toDate
+                ? data.createdAt.toDate().toISOString()
+                : new Date().toISOString();
+              return {
+                id: d.id,
+                player: data.player,
+                score: data.score,
+                puzzleNumber: data.puzzleNumber,
+                createdAt: createdISO,
+              };
+            });
+            // Sort client-side as a temporary fallback
+            list.sort(
+              (a, b) =>
+                new Date(b.createdAt).getTime() -
+                new Date(a.createdAt).getTime()
+            );
+          } else {
+            throw e; // bubble up any other error to the outer catch
+          }
+        }
 
         if (!cancelled) {
           setRoster(players);
