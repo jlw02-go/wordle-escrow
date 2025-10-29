@@ -1,68 +1,114 @@
-import React from 'react';
-import { AllPlayerStats, PlayerStats as PlayerStatsType } from '../types';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
+// components/PlayerStats.tsx
+import React, { useMemo } from "react";
 
-interface PlayerStatsProps {
-    stats: AllPlayerStats;
-    players: string[];
+type PlayerStatsRecord = {
+  gamesPlayed?: number;   // total games counted
+  totalScore?: number;    // sum of scores (lower is better)
+  avgScore?: number;      // average score (derived if missing)
+  wins?: number;          // number of day-wins
+  bestStreak?: number;    // optional
+  currentStreak?: number; // optional
+};
+
+interface Props {
+  stats: Record<string, PlayerStatsRecord> | undefined;
+  players: string[]; // the roster we intend to show
 }
 
-const ScoreDistributionChart: React.FC<{ data: { name: string, value: number }[] }> = ({ data }) => {
-    return (
-        <ResponsiveContainer width="100%" height={120}>
-            <BarChart data={data} margin={{ top: 5, right: 20, left: -10, bottom: 5 }}>
-                <XAxis dataKey="name" tick={{ fill: '#a0aec0' }} axisLine={{ stroke: '#4a5568' }} tickLine={{ stroke: '#4a5568' }} />
-                <YAxis allowDecimals={false} tick={{ fill: '#a0aec0' }} axisLine={{ stroke: '#4a5568' }} tickLine={{ stroke: '#4a5568' }} />
-                <Tooltip cursor={{fill: '#4a5568'}} contentStyle={{backgroundColor: '#2d3748', border: '1px solid #4a5568'}} />
-                <Bar dataKey="value">
-                    {data.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={entry.value > 0 ? '#538d4e' : '#3a3a3c'} />
-                    ))}
-                </Bar>
-            </BarChart>
-        </ResponsiveContainer>
-    );
-};
+const PlayerStats: React.FC<Props> = ({ stats, players }) => {
+  // Debug: see what we actually received
+  // (Open DevTools → Console to view this once after reload)
+  // eslint-disable-next-line no-console
+  console.log("[PlayerStats] props:", { players, stats });
 
-const StatItem: React.FC<{ label: string; value: string | number }> = ({ label, value }) => (
-    <div className="flex justify-between text-sm">
-        <span className="text-gray-400">{label}</span>
-        <span className="font-semibold">{value}</span>
-    </div>
-);
+  // Normalize rows so we always render something for each roster player
+  const rows = useMemo(() => {
+    const safeStats = stats || {};
+    const list = (players || []).map((p) => {
+      const s = safeStats[p] || {};
+      const games = Number.isFinite(s.gamesPlayed!) ? (s.gamesPlayed as number) : 0;
+      const total = Number.isFinite(s.totalScore!) ? (s.totalScore as number) : 0;
+      const avg =
+        Number.isFinite(s.avgScore!) && (s.avgScore as number) > 0
+          ? (s.avgScore as number)
+          : games > 0
+          ? +(total / games).toFixed(2)
+          : 0;
 
-const PlayerStatsCard: React.FC<{ player: string; stats: PlayerStatsType }> = ({ player, stats }) => {
-    const chartData = Object.entries(stats.scoreDistribution).map(([score, count]) => ({
-        name: score,
-        value: count,
-    }));
+      return {
+        player: p,
+        games,
+        total,
+        avg,
+        wins: Number.isFinite(s.wins!) ? (s.wins as number) : 0,
+        bestStreak:
+          Number.isFinite(s.bestStreak!) ? (s.bestStreak as number) : undefined,
+        currentStreak:
+          Number.isFinite(s.currentStreak!) ? (s.currentStreak as number) : undefined,
+      };
+    });
 
-    return (
-        <div className="bg-gray-700 p-4 rounded-lg">
-            <h3 className="font-bold text-xl mb-3">{player}</h3>
-            <div className="space-y-2 mb-4">
-                <StatItem label="Games Played" value={stats.gamesPlayed} />
-                <StatItem label="Win %" value={`${stats.winPercentage}%`} />
-                <StatItem label="Avg Score" value={stats.averageScore || 'N/A'} />
-                <StatItem label="Current Streak" value={stats.currentStreak} />
-                <StatItem label="Max Streak" value={stats.maxStreak} />
-            </div>
-            <h4 className="text-sm font-semibold text-gray-300 mb-2">Guess Distribution</h4>
-            <ScoreDistributionChart data={chartData} />
-        </div>
-    );
-};
+    // Example sort: best average first, then more games
+    list.sort((a, b) => {
+      if (a.games === 0 && b.games === 0) return a.player.localeCompare(b.player);
+      if (a.games === 0) return 1;
+      if (b.games === 0) return -1;
+      if (a.avg !== b.avg) return a.avg - b.avg; // lower avg is better
+      return b.games - a.games;
+    });
 
-const PlayerStats: React.FC<PlayerStatsProps> = ({ stats, players }) => {
+    return list;
+  }, [players, stats]);
+
+  const hasAnyGames = rows.some((r) => r.games > 0);
+
   return (
-    <div className="bg-gray-800 p-6 rounded-lg shadow-lg">
-      <h2 className="text-2xl font-bold mb-4">Player Statistics</h2>
-      <div className="space-y-4">
-        {players.map(player => (
-            stats[player] && <PlayerStatsCard key={player} player={player} stats={stats[player]} />
-        ))}
-      </div>
-    </div>
+    <section aria-labelledby="player-stats-h" className="rounded-lg border p-4">
+      <h3 id="player-stats-h" className="text-lg font-semibold mb-3">
+        Player Statistics
+      </h3>
+
+      {!players?.length ? (
+        <p className="text-sm text-gray-400">No players yet.</p>
+      ) : !hasAnyGames ? (
+        <p className="text-sm text-gray-400">
+          No stats to show yet — submit a few scores to populate this section.
+        </p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-sm">
+            <thead>
+              <tr className="text-left text-gray-300 border-b border-gray-700">
+                <th className="py-2 pr-4">Player</th>
+                <th className="py-2 pr-4">Games</th>
+                <th className="py-2 pr-4">Avg</th>
+                <th className="py-2 pr-4">Total</th>
+                <th className="py-2 pr-4">Wins</th>
+                <th className="py-2 pr-4">Streak</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.player} className="border-b border-gray-800">
+                  <td className="py-2 pr-4 font-medium">{r.player}</td>
+                  <td className="py-2 pr-4">{r.games}</td>
+                  <td className="py-2 pr-4">
+                    {r.games > 0 ? r.avg.toFixed(2) : "—"}
+                  </td>
+                  <td className="py-2 pr-4">{r.total || 0}</td>
+                  <td className="py-2 pr-4">{r.wins || 0}</td>
+                  <td className="py-2 pr-4">
+                    {r.currentStreak ?? 0}
+                    {typeof r.bestStreak === "number" &&
+                      ` (best ${r.bestStreak})`}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
   );
 };
 
