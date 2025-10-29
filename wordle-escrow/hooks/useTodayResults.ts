@@ -6,19 +6,14 @@ import {
 } from "firebase/firestore";
 
 const TZ = "America/Chicago";
-const LS_PREFIX = "results-";
 
-// Format YYYY-MM-DD in America/Chicago
 function todayStr() {
   const now = new Date();
   const fmt = new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" });
-  return fmt.format(now);
+  return fmt.format(now); // YYYY-MM-DD
 }
 
-// Compute [start, end) Date objects for the Chicago day
 function chicagoDayRange(dayISO: string) {
-  // Construct a Chicago-local midnight. Using fixed offset is tricky around DST; build via Date + tz.
-  // Simple approach: parse as local then adjust by tz using Intl roundtrip.
   const startLocal = new Date(`${dayISO}T00:00:00`);
   const endLocal = new Date(startLocal.getTime() + 24 * 60 * 60 * 1000);
   return { start: startLocal, end: endLocal };
@@ -26,6 +21,7 @@ function chicagoDayRange(dayISO: string) {
 
 type Result = {
   id: string;
+  groupId: string;
   playerA: string;
   playerB: string;
   scoreA: number;
@@ -33,40 +29,16 @@ type Result = {
   gifUrl?: string | null;
   gifAlt?: string | null;
   gifProvider?: string | null;
-  createdAt: string; // ISO when read
+  createdAt: string;
 };
 
-// ---------- Fallback helpers ----------
-function lsKey(day: string) {
-  return `${LS_PREFIX}${day}`;
-}
-function readLocal(day: string): Result[] {
-  const raw = localStorage.getItem(lsKey(day));
-  const arr: Result[] = raw ? JSON.parse(raw) : [];
-  return arr.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-}
-function writeLocal(day: string, payload: Omit<Result, "id" | "createdAt">): Result {
-  const createdAt = new Date().toISOString();
-  const local: Result = {
-    id: `local-${crypto.randomUUID?.() ?? Math.random().toString(36).slice(2)}`,
-    createdAt,
-    ...payload,
-  };
-  const key = lsKey(day);
-  const arr: Result[] = JSON.parse(localStorage.getItem(key) ?? "[]");
-  arr.push(local);
-  localStorage.setItem(key, JSON.stringify(arr));
-  return local;
-}
-
-// ---------- Firestore-backed fetch/write with graceful fallback ----------
-async function fetchResults(day: string): Promise<Result[]> {
-  if (!db) return readLocal(day);
+async function fetchResults(day: string, groupId: string): Promise<Result[]> {
+  if (!db) return [];
 
   const { start, end } = chicagoDayRange(day);
-  // Use server timestamps for range; order on same field
   const qRef = query(
     collection(db, "results"),
+    where("groupId", "==", groupId),
     where("createdAt", ">=", Timestamp.fromDate(start)),
     where("createdAt", "<", Timestamp.fromDate(end)),
   );
@@ -74,14 +46,13 @@ async function fetchResults(day: string): Promise<Result[]> {
   const snap = await getDocs(qRef);
   const items = snap.docs.map((d) => {
     const data = d.data() as any;
-    // createdAt may be a Firestore Timestamp until resolved
     const createdISO =
       data.createdAt && typeof data.createdAt.toDate === "function"
         ? data.createdAt.toDate().toISOString()
         : new Date().toISOString();
-
     return {
       id: d.id,
+      groupId: data.groupId,
       playerA: data.playerA,
       playerB: data.playerB,
       scoreA: data.scoreA,
@@ -93,15 +64,15 @@ async function fetchResults(day: string): Promise<Result[]> {
     } as Result;
   });
 
-  // newest first
   items.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   return items;
 }
 
 async function postResult(day: string, payload: Omit<Result, "id" | "createdAt">): Promise<Result> {
-  if (!db) return writeLocal(day, payload);
+  if (!db) throw new Error("Firestore not initialized");
 
   const docRef = await addDoc(collection(db, "results"), {
+    groupId: payload.groupId,
     playerA: payload.playerA,
     playerB: payload.playerB,
     scoreA: payload.scoreA,
@@ -112,7 +83,6 @@ async function postResult(day: string, payload: Omit<Result, "id" | "createdAt">
     createdAt: serverTimestamp(),
   });
 
-  // return a lightweight optimistic item; it'll be replaced on refetch
   return {
     id: docRef.id,
     createdAt: new Date().toISOString(),
@@ -120,20 +90,20 @@ async function postResult(day: string, payload: Omit<Result, "id" | "createdAt">
   };
 }
 
-// ------------------ React Query hook -------------------
-export function useTodayResults() {
+export function useTodayResults(groupId: string) {
   const qc = useQueryClient();
   const day = todayStr();
-  const key = ["results", day];
+  const key = ["results", day, groupId];
 
   const queryState = useQuery({
     queryKey: key,
-    queryFn: () => fetchResults(day),
+    queryFn: () => fetchResults(day, groupId),
+    enabled: !!groupId, // don’t run until we have a groupId
   });
 
   const mutation = useMutation({
     mutationFn: async (payload: {
-      playerA: string; playerB: string; scoreA: number; scoreB: number;
+      groupId: string; playerA: string; playerB: string; scoreA: number; scoreB: number;
       gifUrl?: string | null; gifAlt?: string | null; gifProvider?: string | null;
     }) => postResult(day, payload),
     onSuccess: () => {
