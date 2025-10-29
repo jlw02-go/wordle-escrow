@@ -1,6 +1,6 @@
 // pages/GroupPage.tsx
 import React, { useEffect, useMemo, useState } from 'react';
-import { useParams, Link, useLocation } from 'react-router-dom';
+import { useParams, Link, useLocation, Navigate } from 'react-router-dom';
 
 import ScoreInputForm from '../components/ScoreInputForm';
 import TodaysResults from '../components/TodaysResults';
@@ -17,57 +17,34 @@ import { db } from '../firebase';
 import { doc, getDoc } from 'firebase/firestore';
 
 const DEFAULT_PLAYERS = ['Joe', 'Pete'];
-const TZ = "America/Chicago";
+const TZ = 'America/Chicago';
 function todayISO() {
-  const fmt = new Intl.DateTimeFormat("en-CA", {
-    timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit",
+  const fmt = new Intl.DateTimeFormat('en-CA', {
+    timeZone: TZ,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
   });
   return fmt.format(new Date());
-}
-
-// Minimal error boundary so broken children don't fail silently
-class SafeBox extends React.Component<
-  { title: string; children: React.ReactNode },
-  { hasError: boolean; msg?: string }
-> {
-  constructor(props: any) {
-    super(props);
-    this.state = { hasError: false };
-  }
-  static getDerivedStateFromError(err: any) {
-    return { hasError: true, msg: String(err?.message || err) };
-  }
-  componentDidCatch(err: any, info: any) {
-    // Also log to console for details
-    // eslint-disable-next-line no-console
-    console.error(`[SafeBox:${this.props.title}]`, err, info);
-  }
-  render() {
-    if (this.state.hasError) {
-      return (
-        <div className="rounded-md border border-red-500/40 bg-red-500/10 p-3 text-sm">
-          <div className="font-semibold">Error in {this.props.title}</div>
-          <div className="opacity-80 break-words">{this.state.msg}</div>
-        </div>
-      );
-    }
-    return this.props.children as any;
-  }
 }
 
 const GroupPage: React.FC = () => {
   const { groupId } = useParams<{ groupId: string }>();
   const location = useLocation();
 
-  // Title is fixed per your request
+  // If you ever mount GroupPage at '/', redirect to your group (safety).
+  if (!groupId) {
+    return <Navigate to="/group/main" replace />;
+  }
+
+  // Fixed site title per your request
   const groupTitle = 'Wordle Escrow';
-  const showSubtitle = false;
+  const showSubtitle = false; // set to true if you want "Group: <id>" under the title
   const subtitle = useMemo(() => (groupId ? `Group: ${groupId}` : ''), [groupId]);
 
-  // Roster (read if present; union with Joe/Pete)
+  // Roster: read group doc if present; union with Joe/Pete; cap at 10
   const [players, setPlayers] = useState<string[]>(DEFAULT_PLAYERS);
   const [loadingRoster, setLoadingRoster] = useState(true);
-  const [rosterError, setRosterError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -85,22 +62,18 @@ const GroupPage: React.FC = () => {
             : [];
         const merged = Array.from(new Set([...DEFAULT_PLAYERS, ...list])).slice(0, 10);
         if (!cancelled) setPlayers(merged);
-      } catch (e: any) {
-        console.error('[GroupPage] roster load:', e?.message || e);
-        if (!cancelled) {
-          setRosterError("Couldn't load group roster.");
-          setPlayers(DEFAULT_PLAYERS);
-        }
       } finally {
         if (!cancelled) setLoadingRoster(false);
       }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [groupId]);
 
   // Core data
   const today = todayISO();
-  const fakeGroup = groupId ? ({ id: groupId, name: groupTitle } as any) : undefined;
+  const fakeGroup = { id: groupId, name: groupTitle } as any;
   const {
     stats,
     todaysSubmissions,
@@ -110,7 +83,7 @@ const GroupPage: React.FC = () => {
     loading: wordleDataLoading,
   } = useWordleData({ group: fakeGroup });
 
-  // Reveal logic + debug override
+  // Reveal logic (all submitted OR 1:00 PM CT) with quiet override
   const { reveal } = useRevealStatus(groupId);
   const forceReveal = new URLSearchParams(location.search).get('reveal') === '1';
   const showReveal = forceReveal || reveal;
@@ -123,55 +96,42 @@ const GroupPage: React.FC = () => {
       <div className="max-w-7xl mx-auto">
         <header className="text-center mb-8">
           <h1 className="text-4xl sm:text-5xl font-bold tracking-wider uppercase">{groupTitle}</h1>
-          <div className="flex flex-col items-center gap-1 mt-2">
-            {showSubtitle && subtitle && (
+          {showSubtitle && subtitle && (
+            <div className="mt-2">
               <span className="text-xs uppercase tracking-wider text-gray-400 bg-gray-800/60 px-2 py-1 rounded">
                 {subtitle}
               </span>
-            )}
-            <div className="flex justify-center items-center gap-4">
-              <Link to="/" className="text-gray-400 hover:text-wordle-green transition-colors text-sm">
-                Home
-              </Link>
-              {groupId && (
-                <Link
-                  to={`/group/${groupId}/settings`}
-                  className="text-gray-400 hover:text-wordle-green transition-colors text-sm"
-                >
-                  Settings
-                </Link>
-              )}
             </div>
-            {rosterError && <p className="text-xs text-red-400 mt-1">{rosterError}</p>}
+          )}
+          <div className="flex justify-center items-center gap-4 mt-2">
+            <Link to="/" className="text-gray-400 hover:text-wordle-green transition-colors text-sm">
+              Home
+            </Link>
+            <Link
+              to={`/group/${groupId}/settings`}
+              className="text-gray-400 hover:text-wordle-green transition-colors text-sm"
+            >
+              Settings
+            </Link>
           </div>
         </header>
 
         {/* Tabs */}
         <div className="mb-8 border-b border-gray-700">
           <nav className="-mb-px flex space-x-2 sm:space-x-6 justify-center" aria-label="Tabs">
-            <TabButton currentView={view} viewName="today" setView={setView}>Today&apos;s Game</TabButton>
-            <TabButton currentView={view} viewName="history" setView={setView}>Game History</TabButton>
-            <TabButton currentView={view} viewName="h2h" setView={setView}>Head-to-Head</TabButton>
+            <TabButton currentView={view} viewName="today" setView={setView}>
+              Today&apos;s Game
+            </TabButton>
+            <TabButton currentView={view} viewName="history" setView={setView}>
+              Game History
+            </TabButton>
+            <TabButton currentView={view} viewName="h2h" setView={setView}>
+              Head-to-Head
+            </TabButton>
           </nav>
         </div>
 
         {(loadingRoster || wordleDataLoading) && <p className="text-center">Loading...</p>}
-
-        {/* Debug panel only when ?reveal=1 */}
-        {forceReveal && (
-          <div className="mx-auto mb-6 max-w-3xl rounded-md border border-yellow-400/30 bg-yellow-400/10 p-3 text-sm">
-            <div className="font-semibold">Debug mode (reveal=1)</div>
-            <div className="opacity-80">
-              showReveal: {String(showReveal)} • forceReveal: {String(forceReveal)} • realReveal: {String(reveal)}
-            </div>
-            <div className="opacity-80">
-              players: {players.join(', ') || '(none)'} • today: {today}
-            </div>
-            <div className="opacity-80">
-              submissions today: {Object.keys(todaysSubmissions || {}).length}
-            </div>
-          </div>
-        )}
 
         {/* TODAY */}
         {!loadingRoster && !wordleDataLoading && view === 'today' && (
@@ -183,40 +143,19 @@ const GroupPage: React.FC = () => {
                 players={players}
               />
 
-              {/* Shows submitted/awaiting, hides grids until reveal */}
+              {/* Shows Submitted/Awaiting; hides grids until reveal */}
               <TodaysResults players={players} />
 
-              {/* Normal: only show when revealed */}
-              {showReveal && !forceReveal && (
+              {/* Reveal-gated extras (or via ?reveal=1 silently) */}
+              {showReveal && (
                 <>
-                  <SafeBox title="AiSummary">
-                    <AiSummary
-                      todaysSubmissions={todaysSubmissions}
-                      saveAiSummary={(text: string) => saveAiSummary(today, text)}
-                      today={today}
-                      existingSummary={allSubmissions[today]?.aiSummary}
-                    />
-                  </SafeBox>
-                  <SafeBox title="GiphyDisplay">
-                    <GiphyDisplay todaysSubmissions={todaysSubmissions} />
-                  </SafeBox>
-                </>
-              )}
-
-              {/* Debug override: force-mount even if internal conditions would hide */}
-              {forceReveal && (
-                <>
-                  <SafeBox title="AiSummary (forced)">
-                    <AiSummary
-                      todaysSubmissions={todaysSubmissions}
-                      saveAiSummary={(text: string) => saveAiSummary(today, text)}
-                      today={today}
-                      existingSummary={allSubmissions[today]?.aiSummary}
-                    />
-                  </SafeBox>
-                  <SafeBox title="GiphyDisplay (forced)">
-                    <GiphyDisplay todaysSubmissions={todaysSubmissions} />
-                  </SafeBox>
+                  <AiSummary
+                    todaysSubmissions={todaysSubmissions}
+                    saveAiSummary={(text: string) => saveAiSummary(today, text)}
+                    today={today}
+                    existingSummary={allSubmissions[today]?.aiSummary}
+                  />
+                  <GiphyDisplay todaysSubmissions={todaysSubmissions} />
                 </>
               )}
             </div>
