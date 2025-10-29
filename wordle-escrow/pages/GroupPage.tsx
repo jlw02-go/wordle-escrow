@@ -1,8 +1,7 @@
 // pages/GroupPage.tsx
 import React, { useEffect, useState } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, Link } from 'react-router-dom';
 
-import { useGroupData } from '../hooks/useGroupData';
 import { useWordleData } from '../hooks/useWordleData';
 
 import ScoreInputForm from '../components/ScoreInputForm';
@@ -23,18 +22,6 @@ const DEFAULT_PLAYERS = ['Joe', 'Pete'];
 
 const GroupPage: React.FC = () => {
   const { groupId } = useParams<{ groupId: string }>();
-  const navigate = useNavigate();
-
-  // Your existing group loader
-  const { getGroupById, groups, loading: groupsLoading } = useGroupData();
-  const group = groupId ? getGroupById(groupId) : undefined;
-
-  // Redirect home if group list loaded and this group doesn't exist in your local model
-  useEffect(() => {
-    if (!groupsLoading && groups.length > 0 && !group) {
-      navigate('/');
-    }
-  }, [groupsLoading, groups, group, navigate, groupId]);
 
   // Seed Firestore roster with Joe/Pete if the group doc is missing or has an empty players array
   useEffect(() => {
@@ -43,7 +30,7 @@ const GroupPage: React.FC = () => {
       const gref = doc(db, 'groups', groupId);
       const snap = await getDoc(gref);
       if (!snap.exists()) {
-        await setDoc(gref, { name: group?.name ?? groupId, players: DEFAULT_PLAYERS });
+        await setDoc(gref, { name: groupId, players: DEFAULT_PLAYERS });
         return;
       }
       const data = snap.data() as any;
@@ -53,9 +40,11 @@ const GroupPage: React.FC = () => {
       }
     }
     seedRosterIfEmpty().catch(console.error);
-  }, [groupId, group]);
+  }, [groupId]);
 
   // Your existing aggregated Wordle data (kept for history, stats, etc.)
+  // Pass a minimal "group" so your hook doesn't choke on undefined
+  const fakeGroup = groupId ? { id: groupId, name: groupId } as any : undefined;
   const {
     stats,
     today,
@@ -65,22 +54,16 @@ const GroupPage: React.FC = () => {
     saveAiSummary,
     players: localPlayers,
     loading: wordleDataLoading,
-  } = useWordleData({ group });
+  } = useWordleData({ group: fakeGroup });
 
   // Firestore-based reveal status (all submitted OR 1:00 PM America/Chicago)
   const { reveal } = useRevealStatus(groupId);
 
   const [view, setView] = useState<'today' | 'history' | 'h2h'>('today');
 
-  if (!group) {
-    return (
-      <div className="min-h-screen bg-wordle-dark text-wordle-light flex items-center justify-center">
-        Loading group...
-      </div>
-    );
-  }
-
-  // Local players list for legacy components; ScoreInputForm also always shows Joe/Pete + "Other…"
+  // Fallback name if nothing else is available
+  const groupName = groupId || 'Group';
+  // Local players list for legacy components; ScoreInputForm also shows Joe/Pete + "Other…"
   const players = localPlayers.length ? localPlayers : DEFAULT_PLAYERS;
 
   const TabButton: React.FC<{
@@ -105,14 +88,19 @@ const GroupPage: React.FC = () => {
     <div className="min-h-screen bg-wordle-dark text-wordle-light font-sans p-2 sm:p-6 lg:p-8">
       <div className="max-w-7xl mx-auto">
         <header className="text-center mb-8">
-          <h1 className="text-4xl sm:text-5xl font-bold tracking-wider uppercase">{group.name}</h1>
+          <h1 className="text-4xl sm:text-5xl font-bold tracking-wider uppercase">{groupName}</h1>
           <div className="flex justify-center items-center gap-4 mt-2">
             <Link to="/" className="text-gray-400 hover:text-wordle-green transition-colors text-sm">
-              Switch Group
+              Home
             </Link>
-            <Link to={`/group/${groupId}/settings`} className="text-gray-400 hover:text-wordle-green transition-colors text-sm">
-              Settings
-            </Link>
+            {groupId && (
+              <Link
+                to={`/group/${groupId}/settings`}
+                className="text-gray-400 hover:text-wordle-green transition-colors text-sm"
+              >
+                Settings
+              </Link>
+            )}
           </div>
         </header>
 
@@ -143,10 +131,7 @@ const GroupPage: React.FC = () => {
               />
 
               {/* Firestore-driven results with reveal-after-all-or-1pm logic inside */}
-              <TodaysResults
-                todaysSubmissions={todaysSubmissions}
-                players={players}
-              />
+              <TodaysResults todaysSubmissions={todaysSubmissions} players={players} />
 
               {/* Show AI summary + GIF picker when revealed (matches TodaysResults logic) */}
               {reveal && (
@@ -179,9 +164,7 @@ const GroupPage: React.FC = () => {
         )}
 
         <footer className="text-center mt-12 text-gray-500 text-sm">
-          <p>
-            Wordle Score Escrow &copy; {new Date().getFullYear()}
-          </p>
+          <p>Wordle Score Escrow &copy; {new Date().getFullYear()}</p>
         </footer>
       </div>
     </div>
