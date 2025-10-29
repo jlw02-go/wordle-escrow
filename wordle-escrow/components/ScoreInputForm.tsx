@@ -5,17 +5,15 @@ import { useParams } from 'react-router-dom';
 import { Submission, DailySubmissions } from '../types';
 import { parseWordleHeader, extractGrid } from '../utils/parsing';
 
-// Firestore
 import { db } from '../firebase';
 import { collection, addDoc, serverTimestamp, doc, getDoc, updateDoc, arrayUnion } from 'firebase/firestore';
 
-// Current user (from dynamic join flow)
 import { getDisplayName, setDisplayName as saveDisplayName } from '../utils/currentUser';
 
 interface ScoreInputFormProps {
   addSubmission: (submission: Submission) => void;
   todaysSubmissions: DailySubmissions;
-  players: string[];
+  players: string[]; // may be undefined at runtime; we’ll guard
 }
 
 const DEFAULT_OPTIONS = ["Joe", "Pete"];
@@ -29,12 +27,13 @@ const ScoreInputForm: React.FC<ScoreInputFormProps> = ({
   const { groupId } = useParams();
   const currentUser = getDisplayName();
 
-  // Build dropdown list: Joe/Pete first, then unique others from props
+  const safePlayers = Array.isArray(players) ? players : [];
+
   const dropdownPlayers = React.useMemo(() => {
     const set = new Set<string>(DEFAULT_OPTIONS);
-    for (const p of players) set.add(p);
+    for (const p of safePlayers) set.add(p);
     return Array.from(set);
-  }, [players]);
+  }, [safePlayers]);
 
   const isCurrentUserInList = React.useMemo(
     () => !!currentUser && dropdownPlayers.includes(currentUser),
@@ -57,9 +56,8 @@ const ScoreInputForm: React.FC<ScoreInputFormProps> = ({
     }
   }, [isCurrentUserInList, currentUser]);
 
-  // Only allow submit if this person hasn't already submitted (per your local state)
-  const effectiveName = useOther ? otherName.trim() : player.trim();
-  const alreadySubmitted = effectiveName && todaysSubmissions[effectiveName];
+  const effectiveName = (useOther ? otherName : player).trim();
+  const alreadySubmitted = effectiveName && todaysSubmissions && (todaysSubmissions as any)[effectiveName];
 
   const onPlayerChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const val = e.target.value;
@@ -78,7 +76,7 @@ const ScoreInputForm: React.FC<ScoreInputFormProps> = ({
     setError('');
     setSuccess('');
 
-    const chosen = (useOther ? otherName : player).trim();
+    const chosen = effectiveName;
     const text = (shareText || '').trim();
 
     if (!chosen) {
@@ -110,7 +108,6 @@ const ScoreInputForm: React.FC<ScoreInputFormProps> = ({
     const { puzzleNumber, score } = headerData;
     const grid = extractGrid(lines);
 
-    // YYYY-MM-DD in local (stable for your app’s date use)
     const today = new Date(
       new Date().getTime() - new Date().getTimezoneOffset() * 60 * 1000
     )
@@ -127,21 +124,17 @@ const ScoreInputForm: React.FC<ScoreInputFormProps> = ({
 
     setSubmitting(true);
     try {
-      // If this is an "Other…" name, add it to the Firestore roster
       if (useOther && chosen && db && groupId) {
         const gref = doc(db, "groups", groupId);
         const snap = await getDoc(gref);
         if (snap.exists()) {
           await updateDoc(gref, { players: arrayUnion(chosen) });
         }
-        // Persist locally as the user's display name for future visits
         saveDisplayName(chosen);
       }
 
-      // Keep your existing local update
       addSubmission(submission);
 
-      // Persist to Firestore submissions
       if (!db) throw new Error('Firestore not initialized');
       await addDoc(collection(db, 'submissions'), {
         groupId: groupId ?? 'default',
@@ -159,7 +152,6 @@ const ScoreInputForm: React.FC<ScoreInputFormProps> = ({
         setUseOther(false);
         setOtherName("");
       } else {
-        // Clear selection; keep name if they used "Other…"
         setPlayer("");
         if (!useOther) setOtherName("");
       }
@@ -172,10 +164,7 @@ const ScoreInputForm: React.FC<ScoreInputFormProps> = ({
     }
   };
 
-  const submitDisabled =
-    submitting ||
-    !effectiveName ||
-    alreadySubmitted;
+  const submitDisabled = submitting || !effectiveName || !!alreadySubmitted;
 
   return (
     <div className="bg-gray-800 p-6 rounded-lg shadow-lg">
@@ -184,15 +173,11 @@ const ScoreInputForm: React.FC<ScoreInputFormProps> = ({
       <form onSubmit={onSubmit} className="space-y-4">
         {/* Player select */}
         <div>
-          <label
-            htmlFor="player-select"
-            className="block text-sm font-medium text-gray-300 mb-1"
-          >
+          <label htmlFor="player-select" className="block text-sm font-medium text-gray-300 mb-1">
             Player
           </label>
 
           {isCurrentUserInList ? (
-            // Lock to current user if recognized
             <input
               type="text"
               value={currentUser}
@@ -227,7 +212,7 @@ const ScoreInputForm: React.FC<ScoreInputFormProps> = ({
             </>
           )}
 
-          {!isCurrentUserInList && effectiveName && todaysSubmissions[effectiveName] && (
+          {!isCurrentUserInList && effectiveName && (todaysSubmissions as any)?.[effectiveName] && (
             <p className="mt-1 text-xs text-gray-400">
               {effectiveName} has already submitted today.
             </p>
@@ -236,10 +221,7 @@ const ScoreInputForm: React.FC<ScoreInputFormProps> = ({
 
         {/* Wordle paste box */}
         <div>
-          <label
-            htmlFor="share-text"
-            className="block text-sm font-medium text-gray-300 mb-1"
-          >
+          <label htmlFor="share-text" className="block text-sm font-medium text-gray-300 mb-1">
             Paste Wordle Score
           </label>
           <textarea
