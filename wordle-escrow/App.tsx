@@ -5,6 +5,16 @@ import GroupPage from './pages/GroupPage';
 import SettingsPage from './pages/SettingsPage';
 import NotFoundPage from './pages/NotFoundPage';
 import FirebaseWrapper from './components/FirebaseWrapper';
+import { useEffect } from "react";
+import { logFirebaseEnv } from "./debugFirebase";
+
+export default function App() {
+  useEffect(() => {
+    logFirebaseEnv();
+  }, []);
+  return /* your app */;
+}
+
 
 const App: React.FC = () => {
   return (
@@ -22,3 +32,4 @@ const App: React.FC = () => {
 };
 
 export default App;
+
