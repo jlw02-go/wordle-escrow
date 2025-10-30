@@ -1,29 +1,22 @@
 // pages/GroupPage.tsx
-import React, { useEffect, useMemo, useState } from 'react';
-import { useParams, Link, useLocation, Navigate } from 'react-router-dom';
+import React, { useMemo, useState } from "react";
+import { useParams, Link, Navigate, useLocation } from "react-router-dom";
+import ScoreInputForm from "../components/ScoreInputForm";
+import TodaysResults from "../components/TodaysResults";
+import PlayerStats from "../components/PlayerStats";
+import GameHistory from "../components/GameHistory";
+import HeadToHeadStats from "../components/HeadToHeadStats";
+import AiSummary from "../components/AiSummary";
+import GiphyDisplay from "../components/GiphyDisplay";
+import { useWordleData } from "../hooks/useWordleData";
 
-import ScoreInputForm from '../components/ScoreInputForm';
-import TodaysResults from '../components/TodaysResults';
-import PlayerStats from '../components/PlayerStats';
-import GameHistory from '../components/GameHistory';
-import HeadToHeadStats from '../components/HeadToHeadStats';
-import AiSummary from '../components/AiSummary';
-import GiphyDisplay from '../components/GiphyDisplay';
-
-import { useWordleData } from '../hooks/useWordleData';
-import { useRevealStatus } from '../hooks/useRevealStatus';
-
-import { db } from '../firebase';
-import { doc, getDoc } from 'firebase/firestore';
-
-const DEFAULT_PLAYERS = ['Joe', 'Pete'];
-const TZ = 'America/Chicago';
+const TZ = "America/Chicago";
 function todayISO() {
-  const fmt = new Intl.DateTimeFormat('en-CA', {
+  const fmt = new Intl.DateTimeFormat("en-CA", {
     timeZone: TZ,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
   });
   return fmt.format(new Date());
 }
@@ -31,74 +24,36 @@ function todayISO() {
 const GroupPage: React.FC = () => {
   const { groupId } = useParams<{ groupId: string }>();
   const location = useLocation();
+  if (!groupId) return <Navigate to="/group/main" replace />;
 
-  // If GroupPage is mounted without an id, send to your primary group.
-  if (!groupId) {
-    return <Navigate to="/group/main" replace />;
-  }
+  const groupTitle = "Wordle Escrow";
+  const showSubtitle = false;
 
-  // Title/subtitle
-  const groupTitle = 'Wordle Escrow';
-  const showSubtitle = false; // set to true to show "Group: <id>" under title
-  const subtitle = useMemo(() => (groupId ? `Group: ${groupId}` : ''), [groupId]);
+  const fakeGroup = useMemo(() => ({ id: groupId }), [groupId]);
+  const { stats, todaysSubmissions, allSubmissions, addSubmission, loading, today, players } =
+    useWordleData({ group: fakeGroup });
 
-  // Load roster: merge Firestore group players with defaults, cap at 10
-  const [players, setPlayers] = useState<string[]>(DEFAULT_PLAYERS);
-  const [loadingRoster, setLoadingRoster] = useState(true);
+  const submittedCount = Object.keys(todaysSubmissions || {}).length;
+  const forceReveal = new URLSearchParams(location.search).get("reveal") === "1";
+  const revealByAll = submittedCount >= players.length;
+  const revealByTime = (() => {
+    const now = new Date();
+    const target = new Date(`${today}T13:00:00-05:00`); // 1pm CT
+    return now.getTime() >= target.getTime();
+  })();
+  const showReveal = forceReveal || revealByAll || revealByTime;
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        if (!db || !groupId) {
-          if (!cancelled) setPlayers(DEFAULT_PLAYERS);
-          return;
-        }
-        const gref = doc(db, 'groups', groupId);
-        const snap = await getDoc(gref);
-        const list: string[] =
-          snap.exists() && Array.isArray((snap.data() as any).players)
-            ? (snap.data() as any).players
-            : [];
-        const merged = Array.from(new Set([...DEFAULT_PLAYERS, ...list])).slice(0, 10);
-        if (!cancelled) setPlayers(merged);
-      } finally {
-        if (!cancelled) setLoadingRoster(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [groupId]);
-
-  // Core data (from your capped, one-time-read hook)
-  const today = todayISO();
-  const fakeGroup = { id: groupId, name: groupTitle, players } as any;
-  const {
-    stats,
-    todaysSubmissions,
-    allSubmissions,
-    addSubmission,
-    loading: wordleDataLoading,
-  } = useWordleData({ group: fakeGroup });
-
-  // Reveal logic (all-submitted OR 1:00 PM CT) with quiet ?reveal=1 override
-  const { reveal } = useRevealStatus(groupId);
-  const forceReveal = new URLSearchParams(location.search).get('reveal') === '1';
-  const showReveal = forceReveal || reveal;
-
-  // Tabs
-  const [view, setView] = useState<'today' | 'history' | 'h2h'>('today');
+  const [view, setView] = useState<"today" | "history" | "h2h">("today");
 
   return (
     <div className="min-h-screen bg-wordle-dark text-wordle-light font-sans p-2 sm:p-6 lg:p-8">
       <div className="max-w-7xl mx-auto">
         <header className="text-center mb-8">
           <h1 className="text-4xl sm:text-5xl font-bold tracking-wider uppercase">{groupTitle}</h1>
-          {showSubtitle && subtitle && (
+          {showSubtitle && (
             <div className="mt-2">
               <span className="text-xs uppercase tracking-wider text-gray-400 bg-gray-800/60 px-2 py-1 rounded">
-                {subtitle}
+                Group: {groupId}
               </span>
             </div>
           )}
@@ -106,16 +61,9 @@ const GroupPage: React.FC = () => {
             <Link to="/" className="text-gray-400 hover:text-wordle-green transition-colors text-sm">
               Home
             </Link>
-            <Link
-              to={`/group/${groupId}/settings`}
-              className="text-gray-400 hover:text-wordle-green transition-colors text-sm"
-            >
-              Settings
-            </Link>
           </div>
         </header>
 
-        {/* Tabs */}
         <div className="mb-8 border-b border-gray-700">
           <nav className="-mb-px flex space-x-2 sm:space-x-6 justify-center" aria-label="Tabs">
             <TabButton currentView={view} viewName="today" setView={setView}>
@@ -130,10 +78,9 @@ const GroupPage: React.FC = () => {
           </nav>
         </div>
 
-        {(loadingRoster || wordleDataLoading) && <p className="text-center">Loading...</p>}
+        {loading && <p className="text-center">Loading…</p>}
 
-        {/* TODAY */}
-        {!loadingRoster && !wordleDataLoading && view === 'today' && (
+        {!loading && view === "today" && (
           <main className="grid grid-cols-1 lg:grid-cols-3 gap-8">
             <div className="lg:col-span-2 space-y-8">
               <ScoreInputForm
@@ -141,11 +88,7 @@ const GroupPage: React.FC = () => {
                 todaysSubmissions={todaysSubmissions}
                 players={players}
               />
-
-              {/* Shows Submitted/Awaiting; hides grids/results until reveal */}
               <TodaysResults players={players} />
-
-              {/* Reveal-gated extras (or via ?reveal=1 silently) */}
               {showReveal && (
                 <>
                   <AiSummary
@@ -158,20 +101,17 @@ const GroupPage: React.FC = () => {
                 </>
               )}
             </div>
-
             <div className="lg:col-span-1">
               <PlayerStats stats={stats} players={players} />
             </div>
           </main>
         )}
 
-        {/* HISTORY */}
-        {!loadingRoster && !wordleDataLoading && view === 'history' && (
+        {!loading && view === "history" && (
           <GameHistory allSubmissions={allSubmissions} today={today} players={players} />
         )}
 
-        {/* H2H */}
-        {!loadingRoster && !wordleDataLoading && view === 'h2h' && (
+        {!loading && view === "h2h" && (
           <HeadToHeadStats allSubmissions={allSubmissions} players={players} />
         )}
 
@@ -184,17 +124,17 @@ const GroupPage: React.FC = () => {
 };
 
 const TabButton: React.FC<{
-  currentView: 'today' | 'history' | 'h2h';
-  viewName: 'today' | 'history' | 'h2h';
-  setView: (v: 'today' | 'history' | 'h2h') => void;
+  currentView: "today" | "history" | "h2h";
+  viewName: "today" | "history" | "h2h";
+  setView: (v: "today" | "history" | "h2h") => void;
   children: React.ReactNode;
 }> = ({ currentView, viewName, setView, children }) => (
   <button
     onClick={() => setView(viewName)}
     className={`${
       currentView === viewName
-        ? 'border-wordle-green text-wordle-green'
-        : 'border-transparent text-gray-400 hover:text-gray-200 hover:border-gray-500'
+        ? "border-wordle-green text-wordle-green"
+        : "border-transparent text-gray-400 hover:text-gray-200 hover:border-gray-500"
     } whitespace-nowrap py-4 px-2 sm:px-4 border-b-2 font-medium text-md sm:text-lg transition-colors focus:outline-none`}
   >
     {children}
