@@ -1,13 +1,11 @@
+// components/AiSummary.tsx
 import React, { useState } from "react";
-import { Submission, DailySubmissions } from "../types";
-import { db } from "../firebase";
-import { doc, setDoc } from "firebase/firestore";
 
 interface AiSummaryProps {
-  todaysSubmissions: DailySubmissions;
+  todaysSubmissions: Record<string, any>;
   today: string;
   existingSummary?: string;
-  saveAiSummary: (summary: string) => Promise<void>;
+  saveAiSummary: (summary: string) => Promise<void> | void;
 }
 
 const AiSummary: React.FC<AiSummaryProps> = ({
@@ -20,110 +18,91 @@ const AiSummary: React.FC<AiSummaryProps> = ({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  const submissions = Object.values(todaysSubmissions || {});
-  const byScore = [...submissions].sort((a, b) => a.score - b.score);
-
-  // ---------- Gemini AI Banter Generator ----------
-  async function generateWithGemini(): Promise<string> {
-    const key = import.meta.env.VITE_GEMINI_API_KEY as string | undefined;
-    if (!key) throw new Error("Missing VITE_GEMINI_API_KEY");
-
-    const rows = byScore.map((r) => `- ${r.player}: ${r.score}/6`).join("\n");
-    const prompt = `
-You are a witty sports commentator recapping a friendly Wordle competition.
-Write a lively, clever, and brief paragraph (3–5 sentences max).
-Include winners, ties, upsets, and keep it lighthearted.
-Date: ${today}
-Scores (lower is better):
-${rows}
-Now write the recap paragraph only (no title, no intro).`;
-
-    const body = {
-      contents: [
-        {
-          role: "user",
-          parts: [{ text: prompt }],
-        },
-      ],
-      generationConfig: { temperature: 0.8, maxOutputTokens: 200 },
-    };
-
-    // ✅ Use "latest" model alias + header auth
-    const url =
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent";
-
-    const resp = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-goog-api-key": key,
-      },
-      body: JSON.stringify(body),
-    });
-
-    if (!resp.ok) {
-      const text = await resp.text().catch(() => "");
-      throw new Error(`Gemini HTTP ${resp.status}: ${text.slice(0, 200)}`);
-    }
-
-    const json = await resp.json();
-    const out =
-      json?.candidates?.[0]?.content?.parts?.[0]?.text ||
-      (Array.isArray(json?.candidates?.[0]?.content?.parts)
-        ? json.candidates[0].content.parts
-            .map((p: any) => p?.text)
-            .filter(Boolean)
-            .join("\n")
-        : "") ||
-      "";
-
-    if (!out.trim()) throw new Error("Gemini returned empty text");
-    return out.trim();
-  }
-
-  const generateSummary = async () => {
-    setError("");
+  async function handleGenerate() {
     setLoading(true);
+    setError("");
+
     try {
-      const text = await generateWithGemini();
-      setSummary(text);
-      await saveAiSummary(text);
+      const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+      if (!apiKey) {
+        throw new Error("Missing Gemini API key (VITE_GEMINI_API_KEY).");
+      }
+
+      const submissionsArray = Object.entries(todaysSubmissions || {}).map(
+        ([player, data]) => `${player}: ${JSON.stringify(data)}`
+      );
+
+      const prompt = `
+You are a witty commentator describing the daily Wordle competition among friends.
+Today's date: ${today}.
+Each submission includes a player and their result.
+Write a short, humorous recap (2–4 sentences) summarizing the day's outcomes.
+Do NOT repeat raw data — use tone like a friendly sportscaster.
+Data: ${submissionsArray.join("\n")}
+`;
+
+      console.log("[AI Summary] Sending prompt:", prompt);
+
+      const url =
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent";
+
+      const response = await fetch(`${url}?key=${apiKey}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+        }),
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        console.error("Gemini API error:", response.status, text);
+        throw new Error(`Gemini HTTP ${response.status}: ${text}`);
+      }
+
+      const data = await response.json();
+      const aiText =
+        data?.candidates?.[0]?.content?.parts?.[0]?.text ||
+        "Gemini didn’t send a summary this time.";
+
+      console.log("[AI Summary] Received:", aiText);
+      setSummary(aiText);
+      await saveAiSummary(aiText);
     } catch (err: any) {
       console.error("AI Summary generation failed:", err);
-      const fallback = `Wordle Recap for ${today}: A tightly contested day! 
-${byScore
-  .map((r, i) => `${i + 1}. ${r.player} (${r.score}/6)`)
-  .join(", ")}. Stay tuned for more witty commentary tomorrow!`;
-      setSummary(fallback);
       setError("AI generator failed — using local banter instead.");
+      const fallback = `(${today}) Our brave Wordlers faced the grid again. Some triumphed, others cursed their fifth guess—but spirits remain high.`;
+      setSummary(fallback);
       await saveAiSummary(fallback);
     } finally {
       setLoading(false);
     }
-  };
+  }
 
   return (
-    <section className="bg-gray-800 p-6 rounded-lg shadow-lg space-y-4">
-      <h2 className="text-2xl font-bold text-wordle-green mb-2">
+    <section
+      aria-labelledby="ai-summary-h"
+      className="rounded-lg border border-gray-700 p-4"
+    >
+      <h3 id="ai-summary-h" className="text-lg font-semibold mb-3">
         Daily AI Banter
-      </h2>
-
-      {error && <p className="text-red-400 text-sm">{error}</p>}
+      </h3>
 
       {summary ? (
-        <div className="bg-gray-900 p-4 rounded-md border border-gray-700 whitespace-pre-wrap">
-          {summary}
-        </div>
+        <p className="text-gray-200 whitespace-pre-line mb-3">{summary}</p>
       ) : (
-        <p className="text-gray-400 italic">
-          No AI summary yet — click Generate below!
+        <p className="text-gray-400 mb-3">
+          No witty summary yet — click below to generate one!
         </p>
       )}
 
+      {error && <p className="text-red-400 text-sm mb-2">{error}</p>}
+
       <button
-        onClick={generateSummary}
+        type="button"
         disabled={loading}
-        className="bg-wordle-green hover:bg-green-600 text-white font-semibold py-2 px-4 rounded-md transition disabled:opacity-60"
+        onClick={handleGenerate}
+        className="bg-wordle-green hover:bg-green-600 text-white font-semibold py-2 px-4 rounded disabled:opacity-60"
       >
         {loading ? "Generating..." : "Generate"}
       </button>
