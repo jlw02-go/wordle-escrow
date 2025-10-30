@@ -9,14 +9,14 @@ type DaySubmission = {
 };
 
 type AllSubmissions = Record<
-  string, // YYYY-MM-DD
+  string,                       // YYYY-MM-DD
   Record<string, DaySubmission> // player -> submission
 >;
 
 type Props = {
   allSubmissions?: AllSubmissions;
+  todaysSubmissions?: Record<string, DaySubmission>;
   players: string[];
-  /** Optional: pass to hide today's results until reveal is true */
   today?: string;      // YYYY-MM-DD
   reveal?: boolean;    // if false, today is excluded
 };
@@ -26,45 +26,50 @@ function asNumberScore(v: unknown): number | null {
   if (typeof v === "number" && Number.isFinite(v)) return v;
   const s = String(v).trim();
   if (!s) return null;
-  if (/^x/i.test(s)) return 7; // treat X as worse than 6
+  if (/^x/i.test(s)) return 7; // treat X/6 (fail) as worse than 6
   const m = s.match(/^(\d+)/);
   return m ? Number(m[1]) : null;
 }
 
-// Case-insensitive lookup: tries exact key, then finds a matching name ignoring case.
+// Case-insensitive lookup for a player's score on a given day
 function getPlayerScore(day: Record<string, DaySubmission> | undefined, name: string): number | null {
   if (!day || !name) return null;
-  if (day[name]?.score != null) return asNumberScore(day[name].score);
+  if (day[name]?.score != null) return asNumberScore(day[name]?.score);
   const lower = name.toLowerCase();
-  const matchedKey = Object.keys(day).find(k => k.toLowerCase() === lower);
-  if (matchedKey && day[matchedKey]?.score != null) return asNumberScore(day[matchedKey].score);
-  return null;
+  const matched = Object.keys(day).find(k => k.toLowerCase() === lower);
+  return matched && day[matched]?.score != null ? asNumberScore(day[matched]?.score) : null;
 }
 
 export default function HeadToHeadStats({
   allSubmissions = {},
+  todaysSubmissions = {},
   players,
-  today,
-  reveal,
+  today = "",
+  reveal = false,
 }: Props) {
   const [a, setA] = useState(players[0] || "");
   const [b, setB] = useState(players[1] || "");
 
-  // Build safe map; optionally hide today if not revealed
-  const effectiveDays = useMemo(() => {
+  // Build effective days:
+  // - If reveal === false, exclude today entirely.
+  // - If reveal === true, merge todaysSubmissions into today's bucket.
+  const effectiveDays: AllSubmissions = useMemo(() => {
     const copy: AllSubmissions = {};
     for (const d of Object.keys(allSubmissions)) {
-      if (today && reveal === false && d === today) continue;
+      if (!reveal && d === today) continue; // hide today pre-reveal
       copy[d] = allSubmissions[d] || {};
     }
+    if (reveal && today) {
+      copy[today] = { ...(copy[today] || {}), ...todaysSubmissions };
+    }
     return copy;
-  }, [allSubmissions, today, reveal]);
+  }, [allSubmissions, todaysSubmissions, reveal, today]);
 
   const comparison = useMemo(() => {
     const rows: Array<{ date: string; sA: number | null; sB: number | null; winner: "A" | "B" | "TIE" }> = [];
     if (!a || !b || a === b) return { rows, meetings: 0, winsA: 0, winsB: 0, ties: 0 };
 
-    const dates = Object.keys(effectiveDays).sort(); // oldest->newest
+    const dates = Object.keys(effectiveDays).sort(); // oldest -> newest
     let winsA = 0, winsB = 0, ties = 0;
 
     for (const date of dates) {
@@ -124,8 +129,8 @@ export default function HeadToHeadStats({
         <p className="text-sm text-gray-500">Choose two different players to see head-to-head results.</p>
       ) : comparison.rows.length === 0 ? (
         <p className="text-sm text-gray-500">
-          No head-to-head games yet with scores for both players.
-          {today && reveal === false ? " (Today is hidden until reveal.)" : ""}
+          No head-to-head games yet with scores for both players
+          {!reveal && today ? " (today is hidden until reveal)." : "."}
         </p>
       ) : (
         <>
