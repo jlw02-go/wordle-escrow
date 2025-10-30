@@ -1,32 +1,57 @@
 // components/AiSummary.tsx
 import React, { useState } from "react";
+import { db } from "../firebase";
+import { doc, setDoc, serverTimestamp } from "firebase/firestore";
 
 interface AiSummaryProps {
   todaysSubmissions: Record<string, any>;
   today: string;
+  groupId: string;
   existingSummary?: string;
-  saveAiSummary: (summary: string) => Promise<void> | void;
+  /** Optional: if you still want to intercept the save */
+  saveAiSummary?: (summary: string) => Promise<void> | void;
 }
+
+const MODEL = "gemini-2.5-flash-lite";
+const ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
 
 const AiSummary: React.FC<AiSummaryProps> = ({
   todaysSubmissions,
   today,
+  groupId,
   existingSummary,
-  saveAiSummary,
+  saveAiSummary, // optional now
 }) => {
   const [summary, setSummary] = useState(existingSummary || "");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  async function persist(summaryText: string) {
+    // If a handler was passed, let it run; otherwise save to Firestore
+    if (typeof saveAiSummary === "function") {
+      await saveAiSummary(summaryText);
+      return;
+    }
+    if (!db) return;
+    const id = `${groupId}_${today}`;
+    await setDoc(
+      doc(db, "daySummaries", id),
+      {
+        groupId,
+        date: today,
+        summary: summaryText,
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true }
+    );
+  }
+
   async function handleGenerate() {
     setLoading(true);
     setError("");
-
     try {
       const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-      if (!apiKey) {
-        throw new Error("Missing Gemini API key (VITE_GEMINI_API_KEY).");
-      }
+      if (!apiKey) throw new Error("Missing Gemini API key (VITE_GEMINI_API_KEY).");
 
       const rows = Object.entries(todaysSubmissions || {})
         .map(([player, d]: [string, any]) => {
@@ -37,18 +62,14 @@ const AiSummary: React.FC<AiSummaryProps> = ({
 
       const prompt = `
 You are a witty commentator recapping a friendly Wordle league.
-Write 3–5 sentences, playful but clean. Mention the winner/ties and any big gaps.
+Write 3–5 sentences, playful but clean. Mention winner/ties and any big gaps.
 Date: ${today}
 Scores (lower is better):
 ${rows}
 Return only the paragraph (no headers).
 `.trim();
 
-      // ✅ Use a current model that works with v1beta
-      const model = "gemini-2.5-flash-lite";
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
-
-      const resp = await fetch(`${url}?key=${apiKey}`, {
+      const resp = await fetch(`${ENDPOINT}?key=${apiKey}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -64,20 +85,23 @@ Return only the paragraph (no headers).
 
       const data = await resp.json();
       const aiText =
-        data?.candidates?.[0]?.content?.parts?.map((p: any) => p?.text).filter(Boolean).join("\n") ||
+        data?.candidates?.[0]?.content?.parts
+          ?.map((p: any) => p?.text)
+          .filter(Boolean)
+          .join("\n") ||
         data?.candidates?.[0]?.content?.parts?.[0]?.text ||
         "";
 
       if (!aiText.trim()) throw new Error("Gemini returned empty text.");
 
       setSummary(aiText.trim());
-      await saveAiSummary(aiText.trim());
+      await persist(aiText.trim());
     } catch (err: any) {
       console.error("AI Summary generation failed:", err);
       setError("AI generator failed — using local banter instead.");
       const fallback = buildLocalFallback(today, todaysSubmissions);
       setSummary(fallback);
-      await saveAiSummary(fallback);
+      await persist(fallback);
     } finally {
       setLoading(false);
     }
@@ -117,8 +141,8 @@ function buildLocalFallback(today: string, subs: Record<string, any>) {
 
   const top = arr[0];
   const worst = arr[arr.length - 1];
-  const tie = arr.filter(x => x.score === top.score).map(x => x.player);
-  const mid = arr.slice(1, -1).map(x => x.player);
+  const tie = arr.filter((x) => x.score === top.score).map((x) => x.player);
+  const mid = arr.slice(1, -1).map((x) => x.player);
 
   const bits: string[] = [];
   if (tie.length > 1) {
