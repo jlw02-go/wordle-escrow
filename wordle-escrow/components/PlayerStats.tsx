@@ -1,120 +1,99 @@
 // components/PlayerStats.tsx
-import React, { useMemo } from "react";
+import React from "react";
+import { Submission } from "../hooks/useWordleData";
 
-/**
- * Flexible shape to match whatever your aggregator returns.
- * If your real field names differ, tell me the exact shape from the console
- * and I’ll align it in one pass.
- */
-type PlayerStatsRecord = {
-  gamesPlayed?: number;   // total games counted
-  totalScore?: number;    // sum of scores (lower is better)
-  avgScore?: number;      // average score (derived here if missing)
-  wins?: number;          // # of day-wins
-  bestStreak?: number;    // optional
-  currentStreak?: number; // optional
+type StatsRecord = {
+  gamesPlayed: number;
+  totalScore: number;
+  avgScore: number;
 };
 
-interface Props {
-  stats: Record<string, PlayerStatsRecord> | undefined;
-  players: string[];
-}
+type Props = {
+  stats: Record<string, StatsRecord>;
+  players: ("Joe" | "Pete")[];
+  /** Hide stats until reveal is true */
+  reveal?: boolean;
+  /** For showing today's guess patterns once revealed */
+  todaysSubmissions?: Record<string, Submission>;
+};
 
-const PlayerStats: React.FC<Props> = ({ stats, players }) => {
-  // Debug once per render so we can see exactly what's arriving
-  // Open DevTools → Console to view
-  // eslint-disable-next-line no-console
-  console.log("[PlayerStats] props:", { players, stats });
+const PlayerStats: React.FC<Props> = ({
+  stats = {},
+  players,
+  reveal = false,
+  todaysSubmissions = {},
+}) => {
+  if (!reveal) {
+    // Hide all numbers/details before reveal time or all-submitted
+    return (
+      <aside className="rounded-lg border border-gray-700 p-4">
+        <h3 className="text-lg font-semibold mb-2">Player Statistics</h3>
+        <p className="text-sm text-gray-400">
+          Stats are hidden until both players submit or it’s 1:00 PM Central.
+        </p>
+      </aside>
+    );
+  }
 
-  const rows = useMemo(() => {
-    const safeStats = stats || {};
-    const list = (players || []).map((p) => {
-      const s = safeStats[p] || {};
-      const games = Number.isFinite(s.gamesPlayed!) ? (s.gamesPlayed as number) : 0;
-      const total = Number.isFinite(s.totalScore!) ? (s.totalScore as number) : 0;
-      const avg =
-        Number.isFinite(s.avgScore!) && (s.avgScore as number) > 0
-          ? (s.avgScore as number)
-          : games > 0
-          ? +(total / games).toFixed(2)
-          : 0;
-
-      return {
-        player: p,
-        games,
-        total,
-        avg,
-        wins: Number.isFinite(s.wins!) ? (s.wins as number) : 0,
-        bestStreak:
-          Number.isFinite(s.bestStreak!) ? (s.bestStreak as number) : undefined,
-        currentStreak:
-          Number.isFinite(s.currentStreak!) ? (s.currentStreak as number) : undefined,
-      };
-    });
-
-    // Sort: players with games first, best average asc, then more games
-    list.sort((a, b) => {
-      const aHas = a.games > 0 ? 1 : 0;
-      const bHas = b.games > 0 ? 1 : 0;
-      if (aHas !== bHas) return bHas - aHas; // any games come first
-      if (a.avg !== b.avg) return a.avg - b.avg; // lower avg better
-      if (a.games !== b.games) return b.games - a.games;
-      return a.player.localeCompare(b.player);
-    });
-
-    return list;
-  }, [players, stats]);
-
-  const hasAnyPlayers = (players || []).length > 0;
-  const hasAnyGames = rows.some((r) => r.games > 0);
+  // Build a consistent row for each player after reveal
+  const rows = players.map((p) => {
+    const s = stats[p] || { gamesPlayed: 0, totalScore: 0, avgScore: 0 };
+    return { player: p, ...s };
+  });
 
   return (
-    <section aria-labelledby="player-stats-h" className="rounded-lg border p-4">
-      <h3 id="player-stats-h" className="text-lg font-semibold mb-3">
-        Player Statistics
-      </h3>
+    <aside className="rounded-lg border border-gray-700 p-4">
+      <h3 className="text-lg font-semibold mb-3">Player Statistics</h3>
 
-      {!hasAnyPlayers ? (
-        <p className="text-sm text-gray-400">No players yet.</p>
-      ) : !hasAnyGames ? (
-        <p className="text-sm text-gray-400">
-          No stats to show yet — submit a few scores to populate this section.
-        </p>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="min-w-full text-sm">
-            <thead>
-              <tr className="text-left text-gray-300 border-b border-gray-700">
-                <th className="py-2 pr-4">Player</th>
-                <th className="py-2 pr-4">Games</th>
-                <th className="py-2 pr-4">Avg</th>
-                <th className="py-2 pr-4">Total</th>
-                <th className="py-2 pr-4">Wins</th>
-                <th className="py-2 pr-4">Streak</th>
+      {/* Aggregate stats table */}
+      <div className="overflow-x-auto">
+        <table className="min-w-full text-sm">
+          <thead className="text-gray-300">
+            <tr>
+              <th className="text-left py-2 pr-3">Player</th>
+              <th className="text-right py-2 px-3">Games</th>
+              <th className="text-right py-2 px-3">Total</th>
+              <th className="text-right py-2 pl-3">Avg</th>
+            </tr>
+          </thead>
+          <tbody className="text-gray-100">
+            {rows.map((r) => (
+              <tr key={r.player} className="border-t border-gray-800">
+                <td className="py-2 pr-3">{r.player}</td>
+                <td className="py-2 px-3 text-right">{r.gamesPlayed}</td>
+                <td className="py-2 px-3 text-right">{r.totalScore}</td>
+                <td className="py-2 pl-3 text-right">{r.avgScore.toFixed(2)}</td>
               </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.player} className="border-b border-gray-800">
-                  <td className="py-2 pr-4 font-medium">{r.player}</td>
-                  <td className="py-2 pr-4">{r.games}</td>
-                  <td className="py-2 pr-4">
-                    {r.games > 0 ? r.avg.toFixed(2) : "—"}
-                  </td>
-                  <td className="py-2 pr-4">{r.total}</td>
-                  <td className="py-2 pr-4">{r.wins}</td>
-                  <td className="py-2 pr-4">
-                    {r.currentStreak ?? 0}
-                    {typeof r.bestStreak === "number" &&
-                      ` (best ${r.bestStreak})`}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </section>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Today's NYT guess patterns (emoji grids) */}
+      <div className="mt-5">
+        <h4 className="text-md font-semibold mb-2">Today’s Guess Patterns</h4>
+        {players.map((p) => {
+          const sub = todaysSubmissions[p];
+          return (
+            <div key={p} className="mb-3 rounded border border-gray-800 p-2">
+              <div className="flex items-center justify-between">
+                <span className="font-medium">{p}</span>
+                <span className="text-sm text-gray-400">
+                  {sub ? `${Number(sub.score)}/6` : "—"}
+                </span>
+              </div>
+              {sub?.grid?.length ? (
+                <pre className="mt-2 text-sm leading-5 whitespace-pre-wrap text-gray-300">
+                  {sub.grid.join("\n")}
+                </pre>
+              ) : (
+                <p className="mt-2 text-xs text-gray-500">No grid available.</p>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </aside>
   );
 };
 
