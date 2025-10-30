@@ -1,5 +1,5 @@
 // pages/GroupPage.tsx
-import React, { useMemo, useState, useMemo as useMemo2 } from "react";
+import React, { useMemo, useState } from "react";
 import { useParams, Navigate, useLocation } from "react-router-dom";
 
 import ScoreInputForm from "../components/ScoreInputForm";
@@ -25,20 +25,21 @@ const GroupPage: React.FC = () => {
   const groupLike = useMemo(() => ({ id: groupId }), [groupId]);
   const {
     players,
-    today,
-    todaysSubmissions,
-    allSubmissions,
+    today,                 // YYYY-MM-DD from hook (Chicago day)
+    todaysSubmissions,     // { [player]: submission }
+    allSubmissions,        // { [date]: { [player]: submission, aiSummary? } }
     stats,
     loading,
     addSubmission,
   } = useWordleData({ group: groupLike });
 
+  // Reveal logic: all submitted OR 7:00 PM CT OR ?reveal=1
   const submittedCount = Object.keys(todaysSubmissions || {}).length;
   const revealByAll = players.length > 0 && submittedCount >= players.length;
 
   const revealByTime = useMemo(() => {
     try {
-      const target = new Date(`${today}T19:00:00-05:00`); // 7pm CT
+      const target = new Date(`${today}T19:00:00-05:00`); // 7pm Central (simple fixed offset)
       return Date.now() >= target.getTime();
     } catch {
       return false;
@@ -53,7 +54,9 @@ const GroupPage: React.FC = () => {
 
   const DebugBar = () => (
     <div className="mb-3 rounded bg-gray-800/60 p-2 text-xs text-gray-300">
-      <div>Debug: reveal={String(reveal)} (force={String(forceReveal)} • all={String(revealByAll)} • time={String(revealByTime)})</div>
+      <div>
+        Debug: reveal={String(reveal)} (force={String(forceReveal)} • all={String(revealByAll)} • time={String(revealByTime)})
+      </div>
       <div>today={today} • players={[...players].join(", ") || "—"} • submitted={submittedCount}</div>
     </div>
   );
@@ -72,6 +75,7 @@ const GroupPage: React.FC = () => {
           )}
         </header>
 
+        {/* Debug – remove whenever you’re done testing */}
         <DebugBar />
 
         <div className="mb-6 border-b border-gray-700">
@@ -91,9 +95,8 @@ const GroupPage: React.FC = () => {
                 addSubmission={addSubmission}
                 todaysSubmissions={todaysSubmissions}
                 players={players}
-                today={today}               {/* 🔴 pass canonical today */}
+                today={today}
               />
-
               <TodaysResults />
 
               {reveal && (
@@ -104,7 +107,13 @@ const GroupPage: React.FC = () => {
                     todaysSubmissions={todaysSubmissions}
                     existingSummary={allSubmissions[today]?.aiSummary}
                   />
-                  <GiphyDisplay today={today} reveal={reveal} currentUser={currentUser} />
+
+                  <GiphyDisplay
+                    today={today}
+                    reveal={reveal}
+                    currentUser={currentUser}
+                  />
+
                   <EmojiReactions
                     groupId={groupId}
                     date={today}
