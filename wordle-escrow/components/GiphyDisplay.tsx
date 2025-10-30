@@ -1,5 +1,5 @@
 // components/GiphyDisplay.tsx
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import { db } from "../firebase";
 import {
@@ -17,104 +17,94 @@ type GifDoc = {
   id?: string;
   groupId: string;
   date: string;          // YYYY-MM-DD
-  url: string;
+  url: string;           // gif url
   title?: string;
-  postedBy?: string;
+  postedBy?: string;     // “Joe” / “Pete”
   createdAt?: any;
 };
 
 type Props = {
-  today: string;               // YYYY-MM-DD (from GroupPage)
+  today: string;               // YYYY-MM-DD
   reveal: boolean;             // only allow posting/seeing after reveal
-  currentUser?: string;        // optional, tags who posted
-  autoClearOnPost?: boolean;   // default true
+  currentUser?: string;        // optional (for default)
+  players: string[];           // roster for “Posting as” selector
 };
 
 const GIPHY_KEY = import.meta.env.VITE_GIPHY_API_KEY || "";
 
-const GiphyDisplay: React.FC<Props> = ({
-  today,
-  reveal,
-  currentUser,
-  autoClearOnPost = true,
-}) => {
+const GiphyDisplay: React.FC<Props> = ({ today, reveal, currentUser, players }) => {
   const { groupId } = useParams();
   const [loading, setLoading] = useState(true);
   const [gifs, setGifs] = useState<GifDoc[]>([]);
   const [q, setQ] = useState("");
   const [results, setResults] = useState<any[]>([]);
   const [searching, setSearching] = useState(false);
-  const [postingId, setPostingId] = useState<string | null>(null);
-  const [toast, setToast] = useState<string>("");
-
   const [listenerError, setListenerError] = useState<string | null>(null);
-  const feedRef = useRef<HTMLDivElement | null>(null);
 
-  // Attach live listener with index fallback
+  // NEW: who is posting?
+  const [poster, setPoster] = useState<string>("");
+
   useEffect(() => {
-    if (!db || !groupId || !today) return;
+    // default to currentUser if it’s in the roster; else first player; else blank
+    const choice =
+      (currentUser && players.includes(currentUser) && currentUser) ||
+      players[0] ||
+      "";
+    setPoster(choice);
+  }, [currentUser, players]);
 
+  // Live feed of today's GIFs (with index fallback)
+  useEffect(() => {
+    if (!db || !groupId) return;
     setLoading(true);
     setListenerError(null);
 
-    // helper to wire a listener from a built query
-    const attach = (qRef: any) =>
-      onSnapshot(
+    let unsub: (() => void) | undefined;
+
+    try {
+      const qRef = query(
+        collection(db, "gifs"),
+        where("groupId", "==", groupId),
+        where("date", "==", today),
+        orderBy("createdAt", "asc")
+      );
+
+      unsub = onSnapshot(
         qRef,
         (snap) => {
-          const rows: GifDoc[] = snap.docs.map((d: any) => ({ id: d.id, ...(d.data() as GifDoc) }));
+          const rows: GifDoc[] = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
           setGifs(rows);
           setLoading(false);
         },
-        (err) => {
-          console.error("[GiphyDisplay] onSnapshot error:", err);
-          setListenerError(err?.message || String(err));
-          setLoading(false);
-        }
-      );
-
-    // Try with orderBy first
-    let unsub: (() => void) | null = null;
-    (async () => {
-      try {
-        const qRef = query(
-          collection(db, "gifs"),
-          where("groupId", "==", groupId),
-          where("date", "==", today),
-          orderBy("createdAt", "asc")
-        );
-        unsub = attach(qRef);
-      } catch (e: any) {
-        // Some environments will throw at build time, but usually Firestore complains at runtime via callback.
-        // As a second fallback, pull once without orderBy and then attach a listener without orderBy.
-        console.warn("[GiphyDisplay] primary query failed, falling back w/o orderBy:", e);
-        try {
-          const fallbackQ = query(
+        async (err) => {
+          // likely index needed; fallback: no orderBy
+          setListenerError(err?.message || "listener error");
+          const noOrder = query(
             collection(db, "gifs"),
             where("groupId", "==", groupId),
             where("date", "==", today)
           );
-          // Prime data once
-          const snap = await getDocs(fallbackQ);
-          const rows = snap.docs.map((d) => ({ id: d.id, ...(d.data() as GifDoc) }));
+          const snap = await getDocs(noOrder);
+          const rows: GifDoc[] = snap.docs
+            .map((d) => ({ id: d.id, ...(d.data() as any) }))
+            // client sort by createdAt if present
+            .sort((a, b) => {
+              const at = (a.createdAt?.toMillis?.() ?? 0);
+              const bt = (b.createdAt?.toMillis?.() ?? 0);
+              return at - bt;
+            });
           setGifs(rows);
           setLoading(false);
-          // Attach listener without orderBy
-          unsub = attach(fallbackQ);
-        } catch (err2: any) {
-          console.error("[GiphyDisplay] fallback query failed:", err2);
-          setListenerError(err2?.message || String(err2));
-          setLoading(false);
         }
-      }
-    })();
-
+      );
+    } catch (e: any) {
+      setListenerError(e?.message || String(e));
+      setLoading(false);
+    }
     return () => {
-      try {
-        if (unsub) unsub();
-      } catch {}
+      if (unsub) unsub();
     };
-  }, [db, groupId, today]);
+  }, [groupId, today]);
 
   const doSearch = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -127,7 +117,8 @@ const GiphyDisplay: React.FC<Props> = ({
       const res = await fetch(endpoint);
       if (!res.ok) throw new Error(`Giphy HTTP ${res.status}`);
       const json = await res.json();
-      setResults(Array.isArray(json?.data) ? json.data : []);
+      const items = Array.isArray(json?.data) ? json.data : [];
+      setResults(items);
     } catch (err) {
       console.error("[GiphyDisplay] search error:", err);
       setResults([]);
@@ -146,49 +137,20 @@ const GiphyDisplay: React.FC<Props> = ({
     if (!best) return;
 
     try {
-      setPostingId(gif?.id || "posting");
-
-      // Optimistic add so user sees it right away
-      const optimistic: GifDoc = {
-        id: `optimistic-${Date.now()}`,
-        groupId,
-        date: today,
-        url: best,
-        title: gif?.title || "",
-        postedBy: currentUser || "",
-        createdAt: new Date().toISOString(),
-      };
-      setGifs((prev) => [...prev, optimistic]);
-
       await addDoc(collection(db, "gifs"), {
         groupId,
         date: today,
         url: best,
         title: gif?.title || "",
-        postedBy: currentUser || "",
+        postedBy: poster || "",                 // <-- use explicit poster
         createdAt: serverTimestamp(),
       } as GifDoc);
 
-      setToast("GIF posted");
-      setTimeout(() => setToast(""), 1800);
-
-      // Scroll to feed
-      requestAnimationFrame(() => {
-        feedRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-      });
-
-      if (autoClearOnPost) {
-        setResults([]);
-        setQ("");
-      }
+      // UX: collapse search results so it’s obvious something happened
+      setResults([]);
+      setQ("");
     } catch (err) {
       console.error("[GiphyDisplay] postGif error:", err);
-      setToast("Could not post GIF");
-      setTimeout(() => setToast(""), 2200);
-      // remove the optimistic item if we added one
-      setGifs((prev) => prev.filter((g) => !String(g.id).startsWith("optimistic-")));
-    } finally {
-      setPostingId(null);
     }
   };
 
@@ -207,26 +169,31 @@ const GiphyDisplay: React.FC<Props> = ({
     );
   }, [reveal]);
 
+  const disabled = !reveal;
+
   return (
     <section className="rounded-lg border border-gray-700 p-4">
-      <div className="flex items-center justify-between">
-        <h3 className="text-lg font-semibold">Today’s GIFs</h3>
-        {toast && (
-          <div className="text-xs px-2 py-1 rounded bg-gray-700 text-gray-100">
-            {toast}
-          </div>
-        )}
+      <h3 className="text-lg font-semibold mb-2">Today’s GIFs</h3>
+      {header}
+
+      {/* Posting as selector */}
+      <div className="mt-3 flex items-center gap-2">
+        <span className="text-xs text-gray-400">Posting as</span>
+        <select
+          value={poster}
+          onChange={(e) => setPoster(e.target.value)}
+          disabled={disabled}
+          className="bg-gray-800 border border-gray-700 rounded-md px-2 py-1 text-sm text-white disabled:opacity-60"
+        >
+          {players.map((p) => (
+            <option key={`poster-${p}`} value={p}>
+              {p}
+            </option>
+          ))}
+        </select>
       </div>
-      <div className="mt-1">{header}</div>
 
-      {/* Optional listener warning */}
-      {listenerError && (
-        <p className="mt-2 text-xs text-yellow-400">
-          Live feed fallback in use (no Firestore index). GIFs will still appear.
-        </p>
-      )}
-
-      {/* Search UI */}
+      {/* Search UI (disabled if not revealed) */}
       <form onSubmit={doSearch} className="mt-3 flex gap-2">
         <input
           type="text"
@@ -234,25 +201,15 @@ const GiphyDisplay: React.FC<Props> = ({
           onChange={(e) => setQ(e.target.value)}
           placeholder="Search GIFs (e.g., victory, clutch, meltdown)"
           className="flex-1 bg-gray-800 border border-gray-700 rounded-md px-3 py-2 text-white placeholder-gray-500 disabled:opacity-60"
-          disabled={!reveal}
+          disabled={disabled}
         />
         <button
           type="submit"
-          disabled={!reveal || searching || !q.trim()}
+          disabled={disabled || searching || !q.trim()}
           className="bg-wordle-green text-white font-semibold px-4 rounded-md disabled:bg-gray-600"
         >
           {searching ? "Searching…" : "Search"}
         </button>
-        {results.length > 0 && (
-          <button
-            type="button"
-            onClick={() => setResults([])}
-            className="border border-gray-600 text-gray-300 px-3 rounded-md hover:bg-gray-800"
-            title="Clear results"
-          >
-            Clear
-          </button>
-        )}
       </form>
 
       {/* Search results grid */}
@@ -263,24 +220,15 @@ const GiphyDisplay: React.FC<Props> = ({
               g?.images?.downsized_medium?.url ||
               g?.images?.downsized?.url ||
               g?.images?.original?.url;
-            const isPosting = postingId === (g?.id || "posting");
             return (
               <button
                 key={g.id}
                 type="button"
                 onClick={() => postGif(g)}
-                disabled={!!postingId}
-                className={`relative border border-gray-700 rounded overflow-hidden hover:border-wordle-green ${
-                  postingId ? "opacity-70 cursor-not-allowed" : ""
-                }`}
-                title="Add this GIF"
+                className="border border-gray-700 rounded overflow-hidden hover:border-wordle-green"
+                title={`Post as ${poster || "?"}`}
               >
                 {url ? <img src={url} alt={g?.title || "GIF"} className="w-full h-auto" /> : null}
-                {isPosting && (
-                  <div className="absolute inset-0 bg-black/50 flex items-center justify-center text-xs text-white">
-                    Posting…
-                  </div>
-                )}
               </button>
             );
           })}
@@ -288,7 +236,7 @@ const GiphyDisplay: React.FC<Props> = ({
       )}
 
       {/* Today feed */}
-      <div className="mt-4" ref={feedRef}>
+      <div className="mt-4">
         {loading ? (
           <p className="text-sm text-gray-400">Loading GIFs…</p>
         ) : gifs.length === 0 ? (
@@ -309,10 +257,16 @@ const GiphyDisplay: React.FC<Props> = ({
             ))}
           </div>
         )}
+
+        {/* Optional notice while index is missing */}
+        {listenerError && (
+          <p className="mt-2 text-xs text-yellow-400">
+            Live feed fallback in use (no Firestore index). GIFs will still appear.
+          </p>
+        )}
       </div>
     </section>
   );
 };
 
 export default GiphyDisplay;
-
