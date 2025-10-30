@@ -25,9 +25,11 @@ function getCurrentUserName(): string {
 const GroupPage: React.FC = () => {
   const { groupId } = useParams<{ groupId: string }>();
   const location = useLocation();
+
+  // If no group in URL, default to "main"
   if (!groupId) return <Navigate to="/group/main" replace />;
 
-  // 🔹 Title + subtitle
+  // Title + subtitle
   const groupTitle = "Wordle Escrow";
   const subtitle = "Safeguarding Wordle Bragging Rights Since 2025";
 
@@ -39,9 +41,10 @@ const GroupPage: React.FC = () => {
     };
   }, []);
 
-  // Joe & Pete only (as discussed)
+  // App scope for now: Joe & Pete
   const players: ("Joe" | "Pete")[] = ["Joe", "Pete"];
 
+  // Hook: data layer
   const fakeGroup = useMemo(() => ({ id: groupId }), [groupId]);
   const {
     stats,
@@ -52,27 +55,28 @@ const GroupPage: React.FC = () => {
     today,
   } = useWordleData({ group: fakeGroup });
 
-  // Reveal: force via ?reveal=1, or both submitted, or time >= 1:00 PM CT
+  // Reveal logic
   const submittedCount = Object.keys(todaysSubmissions || {}).length;
   const forceReveal = new URLSearchParams(location.search).get("reveal") === "1";
   const revealByAll = submittedCount >= players.length;
   const revealByTime = (() => {
+    // Reveal at 1:00 PM CT for *today*
+    // Using a fixed -05:00 offset is acceptable here; refine later if you want DST-accurate logic.
     const now = new Date();
-    const target = new Date(`${today}T13:00:00-05:00`); // 1pm Central
+    const target = new Date(`${today}T13:00:00-05:00`);
     return now.getTime() >= target.getTime();
   })();
   const showReveal = forceReveal || revealByAll || revealByTime;
 
-  // ---- Auto-generate the daily AI summary once when reveal is true
+  // Auto-generate daily summary once when reveal is true
   const autoRanRef = useRef(false);
   useEffect(() => {
     if (!showReveal) return;
     if (autoRanRef.current) return;
     autoRanRef.current = true;
 
-    // Fire-and-forget, function internally skips if summary already exists
     generateSummaryIfNeeded(groupId, today, todaysSubmissions).catch(() => {
-      // Swallow errors here; status/errorMessage are written to Firestore for debugging
+      // Errors are logged to Firestore status; we don't block UI here
     });
   }, [showReveal, groupId, today, todaysSubmissions]);
 
@@ -132,10 +136,10 @@ const GroupPage: React.FC = () => {
                 reveal={showReveal}
               />
 
-              {/* Display-only; content comes from Firestore */}
+              {/* Auto summary display (listens to Firestore) */}
               <AiSummary today={today} groupId={groupId} />
 
-              {/* Multi-GIF, reveal-gated */}
+              {/* Multi-GIF feed, reveal-gated */}
               <GiphyDisplay today={today} reveal={showReveal} currentUser={currentUser} />
             </div>
 
