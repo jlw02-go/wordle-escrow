@@ -43,8 +43,9 @@ Data: ${submissionsArray.join("\n")}
 
       console.log("[AI Summary] Sending prompt:", prompt);
 
-      const url =
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent";
+      // ✅ Use a stable, supported model
+      const modelName = "gemini-1.5-flash-ultra"; // fallback-safe
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent`;
 
       const response = await fetch(`${url}?key=${apiKey}`, {
         method: "POST",
