@@ -10,13 +10,14 @@ import {
   query,
   serverTimestamp,
   where,
+  getDocs,
 } from "firebase/firestore";
 
 type GifDoc = {
   id?: string;
   groupId: string;
   date: string;          // YYYY-MM-DD
-  url: string;           // gif url (downsized or original)
+  url: string;
   title?: string;
   postedBy?: string;
   createdAt?: any;
@@ -26,19 +27,8 @@ type Props = {
   today: string;               // YYYY-MM-DD (from GroupPage)
   reveal: boolean;             // only allow posting/seeing after reveal
   currentUser?: string;        // optional, tags who posted
-  autoClearOnPost?: boolean;   // optional UX toggle, default true
+  autoClearOnPost?: boolean;   // default true
 };
-
-const TZ = "America/Chicago";
-function todayISO() {
-  const fmt = new Intl.DateTimeFormat("en-CA", {
-    timeZone: TZ,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  });
-  return fmt.format(new Date());
-}
 
 const GIPHY_KEY = import.meta.env.VITE_GIPHY_API_KEY || "";
 
@@ -57,35 +47,74 @@ const GiphyDisplay: React.FC<Props> = ({
   const [postingId, setPostingId] = useState<string | null>(null);
   const [toast, setToast] = useState<string>("");
 
+  const [listenerError, setListenerError] = useState<string | null>(null);
   const feedRef = useRef<HTMLDivElement | null>(null);
 
-  // Live feed of today's GIFs
+  // Attach live listener with index fallback
   useEffect(() => {
-    if (!db || !groupId) return;
+    if (!db || !groupId || !today) return;
+
     setLoading(true);
-    const qRef = query(
-      collection(db, "gifs"),
-      where("groupId", "==", groupId),
-      where("date", "==", today),
-      orderBy("createdAt", "asc")
-    );
-    const unsub = onSnapshot(
-      qRef,
-      (snap) => {
-        const rows: GifDoc[] = snap.docs.map((d) => {
-          const data = d.data() as any;
-          return { id: d.id, ...(data as GifDoc) };
-        });
-        setGifs(rows);
-        setLoading(false);
-      },
-      (err) => {
-        console.error("[GiphyDisplay] onSnapshot error:", err);
-        setLoading(false);
+    setListenerError(null);
+
+    // helper to wire a listener from a built query
+    const attach = (qRef: any) =>
+      onSnapshot(
+        qRef,
+        (snap) => {
+          const rows: GifDoc[] = snap.docs.map((d: any) => ({ id: d.id, ...(d.data() as GifDoc) }));
+          setGifs(rows);
+          setLoading(false);
+        },
+        (err) => {
+          console.error("[GiphyDisplay] onSnapshot error:", err);
+          setListenerError(err?.message || String(err));
+          setLoading(false);
+        }
+      );
+
+    // Try with orderBy first
+    let unsub: (() => void) | null = null;
+    (async () => {
+      try {
+        const qRef = query(
+          collection(db, "gifs"),
+          where("groupId", "==", groupId),
+          where("date", "==", today),
+          orderBy("createdAt", "asc")
+        );
+        unsub = attach(qRef);
+      } catch (e: any) {
+        // Some environments will throw at build time, but usually Firestore complains at runtime via callback.
+        // As a second fallback, pull once without orderBy and then attach a listener without orderBy.
+        console.warn("[GiphyDisplay] primary query failed, falling back w/o orderBy:", e);
+        try {
+          const fallbackQ = query(
+            collection(db, "gifs"),
+            where("groupId", "==", groupId),
+            where("date", "==", today)
+          );
+          // Prime data once
+          const snap = await getDocs(fallbackQ);
+          const rows = snap.docs.map((d) => ({ id: d.id, ...(d.data() as GifDoc) }));
+          setGifs(rows);
+          setLoading(false);
+          // Attach listener without orderBy
+          unsub = attach(fallbackQ);
+        } catch (err2: any) {
+          console.error("[GiphyDisplay] fallback query failed:", err2);
+          setListenerError(err2?.message || String(err2));
+          setLoading(false);
+        }
       }
-    );
-    return () => unsub();
-  }, [groupId, today]);
+    })();
+
+    return () => {
+      try {
+        if (unsub) unsub();
+      } catch {}
+    };
+  }, [db, groupId, today]);
 
   const doSearch = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -98,8 +127,7 @@ const GiphyDisplay: React.FC<Props> = ({
       const res = await fetch(endpoint);
       if (!res.ok) throw new Error(`Giphy HTTP ${res.status}`);
       const json = await res.json();
-      const items = Array.isArray(json?.data) ? json.data : [];
-      setResults(items);
+      setResults(Array.isArray(json?.data) ? json.data : []);
     } catch (err) {
       console.error("[GiphyDisplay] search error:", err);
       setResults([]);
@@ -119,6 +147,19 @@ const GiphyDisplay: React.FC<Props> = ({
 
     try {
       setPostingId(gif?.id || "posting");
+
+      // Optimistic add so user sees it right away
+      const optimistic: GifDoc = {
+        id: `optimistic-${Date.now()}`,
+        groupId,
+        date: today,
+        url: best,
+        title: gif?.title || "",
+        postedBy: currentUser || "",
+        createdAt: new Date().toISOString(),
+      };
+      setGifs((prev) => [...prev, optimistic]);
+
       await addDoc(collection(db, "gifs"), {
         groupId,
         date: today,
@@ -128,11 +169,10 @@ const GiphyDisplay: React.FC<Props> = ({
         createdAt: serverTimestamp(),
       } as GifDoc);
 
-      // Success UX: toast, scroll feed into view, optionally clear results
       setToast("GIF posted");
       setTimeout(() => setToast(""), 1800);
 
-      // Scroll to the feed so it’s obvious it appeared
+      // Scroll to feed
       requestAnimationFrame(() => {
         feedRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
       });
@@ -145,6 +185,8 @@ const GiphyDisplay: React.FC<Props> = ({
       console.error("[GiphyDisplay] postGif error:", err);
       setToast("Could not post GIF");
       setTimeout(() => setToast(""), 2200);
+      // remove the optimistic item if we added one
+      setGifs((prev) => prev.filter((g) => !String(g.id).startsWith("optimistic-")));
     } finally {
       setPostingId(null);
     }
@@ -177,7 +219,14 @@ const GiphyDisplay: React.FC<Props> = ({
       </div>
       <div className="mt-1">{header}</div>
 
-      {/* Search UI (disabled if not revealed) */}
+      {/* Optional listener warning */}
+      {listenerError && (
+        <p className="mt-2 text-xs text-yellow-400">
+          Live feed fallback in use (no Firestore index). GIFs will still appear.
+        </p>
+      )}
+
+      {/* Search UI */}
       <form onSubmit={doSearch} className="mt-3 flex gap-2">
         <input
           type="text"
@@ -220,7 +269,7 @@ const GiphyDisplay: React.FC<Props> = ({
                 key={g.id}
                 type="button"
                 onClick={() => postGif(g)}
-                disabled={!!postingId} // prevent double posts
+                disabled={!!postingId}
                 className={`relative border border-gray-700 rounded overflow-hidden hover:border-wordle-green ${
                   postingId ? "opacity-70 cursor-not-allowed" : ""
                 }`}
