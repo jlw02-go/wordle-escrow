@@ -12,6 +12,16 @@ import GiphyDisplay from "../components/GiphyDisplay";
 
 import { useWordleData } from "../hooks/useWordleData";
 
+/** Read a friendly display name if your join flow set it */
+function getCurrentUserName(): string {
+  try {
+    const v = localStorage.getItem("displayName");
+    return v && v.trim() ? v.trim() : "";
+  } catch {
+    return "";
+  }
+}
+
 const GroupPage: React.FC = () => {
   const { groupId } = useParams<{ groupId: string }>();
   const location = useLocation();
@@ -48,6 +58,9 @@ const GroupPage: React.FC = () => {
 
   // Tabs
   const [view, setView] = useState<"today" | "history" | "h2h">("today");
+
+  // Optional: pass who posted the GIF
+  const currentUser = useMemo(() => getCurrentUserName(), []);
 
   return (
     <div className="min-h-screen bg-wordle-dark text-wordle-light font-sans p-2 sm:p-6 lg:p-8">
@@ -109,13 +122,17 @@ const GroupPage: React.FC = () => {
                     groupId={groupId}
                     existingSummary={allSubmissions[today]?.aiSummary}
                   />
-                  <GiphyDisplay todaysSubmissions={todaysSubmissions} />
+                  {/* Updated GiphyDisplay — supports multiple GIFs per day */}
+                  <GiphyDisplay
+                    today={today}
+                    reveal={showReveal}
+                    currentUser={currentUser}
+                  />
                 </>
               )}
             </div>
 
             <div className="lg:col-span-1">
-              {/* Hide stats entirely until reveal */}
               <PlayerStats
                 stats={stats}
                 players={players}
