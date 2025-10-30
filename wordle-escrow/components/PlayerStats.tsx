@@ -6,7 +6,7 @@ type BaseRow = {
   total: number;
   avg: number;
   wins: number;
-  // optional fields; show only if present
+  // optional fields
   best?: number;
   worst?: number;
   streak?: number;
@@ -17,6 +17,7 @@ type Props = {
   stats: Record<string, BaseRow>;
   players: string[];
   reveal: boolean;
+  // Used for the grid/boxes preview beneath the table
   todaysSubmissions?: Record<string, any>;
 };
 
@@ -38,7 +39,7 @@ const PlayerStats: React.FC<Props> = ({ stats, players, reveal, todaysSubmission
       return { player: p, ...r };
     });
 
-    // sort by wins desc, then avg asc, then name
+    // Sort by wins desc, then avg asc, then name
     list.sort((a, b) => {
       if (b.wins !== a.wins) return b.wins - a.wins;
       if (a.avg !== b.avg) return a.avg - b.avg;
@@ -47,7 +48,7 @@ const PlayerStats: React.FC<Props> = ({ stats, players, reveal, todaysSubmission
     return list;
   }, [players, stats]);
 
-  // Determine which optional columns exist for any player
+  // Which optional columns exist?
   const hasBest = rows.some((r) => typeof r.best === "number");
   const hasWorst = rows.some((r) => typeof r.worst === "number");
   const hasStreak = rows.some((r) => typeof r.streak === "number");
@@ -90,7 +91,7 @@ const PlayerStats: React.FC<Props> = ({ stats, players, reveal, todaysSubmission
         </table>
       </div>
 
-      {/* Today’s grids (after reveal) */}
+      {/* Today’s grid/boxes per player */}
       <div className="mt-4 space-y-3">
         {(players || []).map((p) => {
           const sub = todaysSubmissions?.[p];
@@ -98,7 +99,7 @@ const PlayerStats: React.FC<Props> = ({ stats, players, reveal, todaysSubmission
           if (!grid.length) return null;
           return (
             <div key={`grid-${p}`}>
-              <div className="text-sm text-gray-300 mb-1">{p}&apos;s grid</div>
+              <div className="text-sm text-gray-300 mb-1">{p}&apos;s guesses</div>
               <pre className="bg-gray-800/60 p-2 rounded leading-5 whitespace-pre-wrap">
                 {grid.join("\n")}
               </pre>
