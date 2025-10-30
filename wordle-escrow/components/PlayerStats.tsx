@@ -14,8 +14,15 @@ type Props = {
   /** Hide stats until reveal is true */
   reveal?: boolean;
   /** For showing today's guess patterns once revealed */
-  todaysSubmissions?: Record<string, Submission>;
+  todaysSubmissions?: Record<string, Submission | any>;
 };
+
+/** Normalize any stored grid value into an array of lines */
+function asLines(grid: unknown): string[] {
+  if (Array.isArray(grid)) return grid.filter(Boolean).map(String);
+  if (typeof grid === "string") return grid.split(/\r?\n/).filter(Boolean);
+  return [];
+}
 
 const PlayerStats: React.FC<Props> = ({
   stats = {},
@@ -35,7 +42,6 @@ const PlayerStats: React.FC<Props> = ({
     );
   }
 
-  // Build a consistent row for each player after reveal
   const rows = players.map((p) => {
     const s = stats[p] || { gamesPlayed: 0, totalScore: 0, avgScore: 0 };
     return { player: p, ...s };
@@ -74,6 +80,7 @@ const PlayerStats: React.FC<Props> = ({
         <h4 className="text-md font-semibold mb-2">Today’s Guess Patterns</h4>
         {players.map((p) => {
           const sub = todaysSubmissions[p];
+          const gridLines = asLines(sub?.grid);
           return (
             <div key={p} className="mb-3 rounded border border-gray-800 p-2">
               <div className="flex items-center justify-between">
@@ -82,9 +89,9 @@ const PlayerStats: React.FC<Props> = ({
                   {sub ? `${Number(sub.score)}/6` : "—"}
                 </span>
               </div>
-              {sub?.grid?.length ? (
+              {gridLines.length ? (
                 <pre className="mt-2 text-sm leading-5 whitespace-pre-wrap text-gray-300">
-                  {sub.grid.join("\n")}
+                  {gridLines.join("\n")}
                 </pre>
               ) : (
                 <p className="mt-2 text-xs text-gray-500">No grid available.</p>
