@@ -115,7 +115,13 @@ const GroupPage: React.FC = () => {
             </div>
 
             <div className="lg:col-span-1">
-              <PlayerStats stats={stats} players={players} />
+              {/* Hide stats entirely until reveal */}
+              <PlayerStats
+                stats={stats}
+                players={players}
+                reveal={showReveal}
+                todaysSubmissions={todaysSubmissions}
+              />
             </div>
           </main>
         )}
