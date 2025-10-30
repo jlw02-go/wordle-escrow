@@ -1,5 +1,5 @@
 // pages/GroupPage.tsx
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useMemo as useMemo2 } from "react";
 import { useParams, Navigate, useLocation } from "react-router-dom";
 
 import ScoreInputForm from "../components/ScoreInputForm";
@@ -14,17 +14,6 @@ import EmojiReactions from "../components/EmojiReactions";
 import { useWordleData } from "../hooks/useWordleData";
 import { getDisplayName } from "../utils/currentUser";
 
-const TZ = "America/Chicago";
-function chicagoTodayISO(): string {
-  const fmt = new Intl.DateTimeFormat("en-CA", {
-    timeZone: TZ,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  });
-  return fmt.format(new Date()); // YYYY-MM-DD
-}
-
 const GroupPage: React.FC = () => {
   const { groupId } = useParams<{ groupId: string }>();
   const location = useLocation();
@@ -33,26 +22,23 @@ const GroupPage: React.FC = () => {
   const groupTitle = "Wordle Escrow";
   const showSubtitle = true;
 
-  // Hook: roster/submissions/stats for this group
   const groupLike = useMemo(() => ({ id: groupId }), [groupId]);
   const {
     players,
-    today,                 // YYYY-MM-DD (from hook)
-    todaysSubmissions,     // map { [player]: submission }
-    allSubmissions,        // map { [date]: { [player]: submission, aiSummary? } }
-    stats,                 // computed stats by player
+    today,
+    todaysSubmissions,
+    allSubmissions,
+    stats,
     loading,
     addSubmission,
   } = useWordleData({ group: groupLike });
 
-  // Reveal logic
   const submittedCount = Object.keys(todaysSubmissions || {}).length;
   const revealByAll = players.length > 0 && submittedCount >= players.length;
 
   const revealByTime = useMemo(() => {
     try {
-      // 7:00 PM Central; for simplicity assume -05:00 offset (works fine for now)
-      const target = new Date(`${today}T19:00:00-05:00`);
+      const target = new Date(`${today}T19:00:00-05:00`); // 7pm CT
       return Date.now() >= target.getTime();
     } catch {
       return false;
@@ -63,10 +49,8 @@ const GroupPage: React.FC = () => {
   const reveal = forceReveal || revealByAll || revealByTime;
 
   const currentUser = getDisplayName() || "";
-
   const [view, setView] = useState<"today" | "history" | "h2h">("today");
 
-  // Tiny on-screen debug to confirm reveal state & players
   const DebugBar = () => (
     <div className="mb-3 rounded bg-gray-800/60 p-2 text-xs text-gray-300">
       <div>Debug: reveal={String(reveal)} (force={String(forceReveal)} • all={String(revealByAll)} • time={String(revealByTime)})</div>
@@ -88,10 +72,8 @@ const GroupPage: React.FC = () => {
           )}
         </header>
 
-        {/* Debug — remove later if you want */}
         <DebugBar />
 
-        {/* Tabs */}
         <div className="mb-6 border-b border-gray-700">
           <nav className="-mb-px flex space-x-2 sm:space-x-6 justify-center" aria-label="Tabs">
             <TabButton currentView={view} viewName="today" setView={setView}>Today&apos;s Game</TabButton>
@@ -105,17 +87,15 @@ const GroupPage: React.FC = () => {
         {!loading && view === "today" && (
           <main className="grid grid-cols-1 lg:grid-cols-3 gap-8">
             <div className="lg:col-span-2 space-y-8">
-              {/* Submit */}
               <ScoreInputForm
                 addSubmission={addSubmission}
                 todaysSubmissions={todaysSubmissions}
                 players={players}
+                today={today}               {/* 🔴 pass canonical today */}
               />
 
-              {/* Awaiting/submitted list + reveal messaging */}
               <TodaysResults />
 
-              {/* Post-reveal features */}
               {reveal && (
                 <>
                   <AiSummary
@@ -124,16 +104,10 @@ const GroupPage: React.FC = () => {
                     todaysSubmissions={todaysSubmissions}
                     existingSummary={allSubmissions[today]?.aiSummary}
                   />
-
-                  <GiphyDisplay
-                    today={today}
-                    reveal={reveal}
-                    currentUser={currentUser}
-                  />
-
+                  <GiphyDisplay today={today} reveal={reveal} currentUser={currentUser} />
                   <EmojiReactions
                     groupId={groupId}
-                    date={today}                 // IMPORTANT: prop name is "date"
+                    date={today}
                     reveal={reveal}
                     hideIndexWarning={true}
                     currentUser={currentUser}
@@ -142,7 +116,6 @@ const GroupPage: React.FC = () => {
               )}
             </div>
 
-            {/* Stats — hidden until reveal */}
             <div className="lg:col-span-1">
               {!reveal ? (
                 <div className="rounded-lg border border-gray-700 p-3 text-sm text-gray-400">
