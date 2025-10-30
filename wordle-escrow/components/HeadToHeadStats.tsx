@@ -9,7 +9,7 @@ type DaySubmission = {
 };
 
 type AllSubmissions = Record<
-  string,              // YYYY-MM-DD
+  string, // YYYY-MM-DD
   Record<string, DaySubmission> // player -> submission
 >;
 
@@ -26,9 +26,19 @@ function asNumberScore(v: unknown): number | null {
   if (typeof v === "number" && Number.isFinite(v)) return v;
   const s = String(v).trim();
   if (!s) return null;
-  if (/^x/i.test(s)) return 7; // treat X/6 (fail) as worse than 6
+  if (/^x/i.test(s)) return 7; // treat X as worse than 6
   const m = s.match(/^(\d+)/);
   return m ? Number(m[1]) : null;
+}
+
+// Case-insensitive lookup: tries exact key, then finds a matching name ignoring case.
+function getPlayerScore(day: Record<string, DaySubmission> | undefined, name: string): number | null {
+  if (!day || !name) return null;
+  if (day[name]?.score != null) return asNumberScore(day[name].score);
+  const lower = name.toLowerCase();
+  const matchedKey = Object.keys(day).find(k => k.toLowerCase() === lower);
+  if (matchedKey && day[matchedKey]?.score != null) return asNumberScore(day[matchedKey].score);
+  return null;
 }
 
 export default function HeadToHeadStats({
@@ -37,40 +47,31 @@ export default function HeadToHeadStats({
   today,
   reveal,
 }: Props) {
-  // Default the dropdowns to the first two players (Joe, Pete)
   const [a, setA] = useState(players[0] || "");
   const [b, setB] = useState(players[1] || "");
 
-  // Build a safe, optionally “today-hidden” map so we never index undefined
+  // Build safe map; optionally hide today if not revealed
   const effectiveDays = useMemo(() => {
     const copy: AllSubmissions = {};
     for (const d of Object.keys(allSubmissions)) {
-      if (today && reveal === false && d === today) continue; // hide today if not revealed
+      if (today && reveal === false && d === today) continue;
       copy[d] = allSubmissions[d] || {};
     }
     return copy;
   }, [allSubmissions, today, reveal]);
 
-  // Compute pairwise comparison for the selected players
   const comparison = useMemo(() => {
-    const rows: Array<{
-      date: string;
-      sA: number | null;
-      sB: number | null;
-      winner: "A" | "B" | "TIE" | "—";
-    }> = [];
-
+    const rows: Array<{ date: string; sA: number | null; sB: number | null; winner: "A" | "B" | "TIE" }> = [];
     if (!a || !b || a === b) return { rows, meetings: 0, winsA: 0, winsB: 0, ties: 0 };
 
-    const dates = Object.keys(effectiveDays).sort(); // oldest -> newest
+    const dates = Object.keys(effectiveDays).sort(); // oldest->newest
     let winsA = 0, winsB = 0, ties = 0;
 
     for (const date of dates) {
       const day = effectiveDays[date] || {};
-      const sA = asNumberScore(day[a]?.score);
-      const sB = asNumberScore(day[b]?.score);
-
-      if (sA == null || sB == null) continue; // need both to compare
+      const sA = getPlayerScore(day, a);
+      const sB = getPlayerScore(day, b);
+      if (sA == null || sB == null) continue;
 
       let winner: "A" | "B" | "TIE" = "TIE";
       if (sA !== sB) winner = sA < sB ? "A" : "B";
@@ -120,49 +121,45 @@ export default function HeadToHeadStats({
       </div>
 
       {(!a || !b || a === b) ? (
+        <p className="text-sm text-gray-500">Choose two different players to see head-to-head results.</p>
+      ) : comparison.rows.length === 0 ? (
         <p className="text-sm text-gray-500">
-          Choose two different players to see their head-to-head results.
+          No head-to-head games yet with scores for both players.
+          {today && reveal === false ? " (Today is hidden until reveal.)" : ""}
         </p>
       ) : (
         <>
           <div className="text-sm text-gray-300 mb-3">
-            Meetings: <strong>{comparison.meetings}</strong> &nbsp;•&nbsp; 
-            {a} wins: <strong>{comparison.winsA}</strong> &nbsp;•&nbsp; 
-            {b} wins: <strong>{comparison.winsB}</strong> &nbsp;•&nbsp; 
+            Meetings: <strong>{comparison.meetings}</strong> &nbsp;•&nbsp;
+            {a} wins: <strong>{comparison.winsA}</strong> &nbsp;•&nbsp;
+            {b} wins: <strong>{comparison.winsB}</strong> &nbsp;•&nbsp;
             Ties: <strong>{comparison.ties}</strong>
           </div>
 
-          {comparison.rows.length === 0 ? (
-            <p className="text-sm text-gray-500">
-              No head-to-head games yet with scores for both players.
-              {today && reveal === false ? " (Today is hidden until reveal.)" : ""}
-            </p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full text-sm">
-                <thead>
-                  <tr className="text-left border-b border-gray-700">
-                    <th className="py-2 pr-3">Date</th>
-                    <th className="py-2 pr-3 text-right">{a} score</th>
-                    <th className="py-2 pr-3 text-right">{b} score</th>
-                    <th className="py-2 pr-0 text-right">Winner</th>
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="text-left border-b border-gray-700">
+                  <th className="py-2 pr-3">Date</th>
+                  <th className="py-2 pr-3 text-right">{a} score</th>
+                  <th className="py-2 pr-3 text-right">{b} score</th>
+                  <th className="py-2 pr-0 text-right">Winner</th>
+                </tr>
+              </thead>
+              <tbody>
+                {comparison.rows.map((r) => (
+                  <tr key={r.date} className="border-b border-gray-800">
+                    <td className="py-2 pr-3">{r.date}</td>
+                    <td className="py-2 pr-3 text-right">{r.sA ?? "—"}</td>
+                    <td className="py-2 pr-3 text-right">{r.sB ?? "—"}</td>
+                    <td className="py-2 pr-0 text-right">
+                      {r.winner === "A" ? a : r.winner === "B" ? b : "Tie"}
+                    </td>
                   </tr>
-                </thead>
-                <tbody>
-                  {comparison.rows.map((r) => (
-                    <tr key={r.date} className="border-b border-gray-800">
-                      <td className="py-2 pr-3">{r.date}</td>
-                      <td className="py-2 pr-3 text-right">{r.sA ?? "—"}</td>
-                      <td className="py-2 pr-3 text-right">{r.sB ?? "—"}</td>
-                      <td className="py-2 pr-0 text-right">
-                        {r.winner === "A" ? a : r.winner === "B" ? b : "Tie"}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+                ))}
+              </tbody>
+            </table>
+          </div>
         </>
       )}
     </section>
