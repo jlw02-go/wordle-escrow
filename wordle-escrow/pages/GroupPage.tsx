@@ -22,14 +22,24 @@ function getCurrentUserName(): string {
   }
 }
 
+// 7:00 PM Central reveal helper
+function chicagoAtOrAfter(hour24: number, minute: number = 0) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Chicago",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(new Date());
+  const hh = parseInt(parts.find(p => p.type === "hour")?.value || "0", 10);
+  const mm = parseInt(parts.find(p => p.type === "minute")?.value || "0", 10);
+  return hh > hour24 || (hh === hour24 && mm >= minute);
+}
+
 const GroupPage: React.FC = () => {
   const { groupId } = useParams<{ groupId: string }>();
   const location = useLocation();
-
-  // Default route safety
   if (!groupId) return <Navigate to="/group/main" replace />;
 
-  // Branding
   const groupTitle = "Wordle Escrow";
   const subtitle = "Safeguarding Wordle Bragging Rights Since 2025";
 
@@ -40,10 +50,10 @@ const GroupPage: React.FC = () => {
     };
   }, []);
 
-  // App scope (Joe & Pete only)
+  // Fixed roster: Joe & Pete
   const players: ("Joe" | "Pete")[] = ["Joe", "Pete"];
 
-  // Data hook
+  // Data
   const fakeGroup = useMemo(() => ({ id: groupId }), [groupId]);
   const {
     stats,
@@ -54,37 +64,28 @@ const GroupPage: React.FC = () => {
     today,
   } = useWordleData({ group: fakeGroup });
 
-  // Reveal logic: all submitted OR 1:00 PM CT OR ?reveal=1
+  // Reveal: both submitted OR 7:00 PM Central OR ?reveal=1
   const submittedCount = Object.keys(todaysSubmissions || {}).length;
   const forceReveal = new URLSearchParams(location.search).get("reveal") === "1";
   const revealByAll = submittedCount >= players.length;
-  const revealByTime = (() => {
-    // For today's date, reveal at 1:00 PM Central (simple fixed offset works for your needs)
-    const now = new Date();
-    const target = new Date(`${today}T13:00:00-05:00`);
-    return now.getTime() >= target.getTime();
-  })();
+  const revealByTime = chicagoAtOrAfter(19, 0); // 7:00 PM
   const showReveal = forceReveal || revealByAll || revealByTime;
 
-  // Auto-generate daily summary once after reveal
+  // Auto-summary after reveal
   const autoRanRef = useRef(false);
   useEffect(() => {
     if (!showReveal) return;
     if (autoRanRef.current) return;
     autoRanRef.current = true;
-    generateSummaryIfNeeded(groupId, today, todaysSubmissions).catch(() => {
-      // Non-blocking: failures are fine to ignore here
-    });
+    generateSummaryIfNeeded(groupId, today, todaysSubmissions).catch(() => {});
   }, [showReveal, groupId, today, todaysSubmissions]);
 
-  // Tabs
   const [view, setView] = useState<"today" | "history" | "h2h">("today");
   const currentUser = useMemo(() => getCurrentUserName(), []);
 
   return (
     <div className="min-h-screen bg-wordle-dark text-wordle-light font-sans p-2 sm:p-6 lg:p-8">
       <div className="max-w-7xl mx-auto">
-        {/* Header */}
         <header className="text-center mb-8">
           <h1 className="text-4xl sm:text-5xl font-bold tracking-wider uppercase">
             {groupTitle}
@@ -92,12 +93,8 @@ const GroupPage: React.FC = () => {
           <p className="mt-2 text-sm sm:text-base text-gray-400">{subtitle}</p>
         </header>
 
-        {/* Tabs */}
         <div className="mb-8 border-b border-gray-700">
-          <nav
-            className="-mb-px flex space-x-2 sm:space-x-6 justify-center"
-            aria-label="Tabs"
-          >
+          <nav className="-mb-px flex space-x-2 sm:space-x-6 justify-center" aria-label="Tabs">
             <TabButton currentView={view} viewName="today" setView={setView}>
               Today&apos;s Game
             </TabButton>
@@ -110,10 +107,8 @@ const GroupPage: React.FC = () => {
           </nav>
         </div>
 
-        {/* Loading state */}
         {loading && <p className="text-center">Loading…</p>}
 
-        {/* Today */}
         {!loading && view === "today" && (
           <main className="grid grid-cols-1 lg:grid-cols-3 gap-8">
             <div className="lg:col-span-2 space-y-8">
@@ -127,12 +122,11 @@ const GroupPage: React.FC = () => {
                 players={players}
                 todaysSubmissions={todaysSubmissions}
                 reveal={showReveal}
+                revealCutoffLabel="7:00 PM America/Chicago"
               />
 
-              {/* AI summary (auto-populates after reveal via Firestore) */}
               <AiSummary today={today} groupId={groupId} />
 
-              {/* Multi-GIFs (only interactable after reveal) */}
               <GiphyDisplay
                 today={today}
                 reveal={showReveal}
@@ -142,32 +136,24 @@ const GroupPage: React.FC = () => {
 
             <div className="lg:col-span-1">
               <PlayerStats
+                // NOTE: stats might include today — we recalc display below to hide it until reveal
                 stats={stats}
                 players={players}
                 reveal={showReveal}
                 todaysSubmissions={todaysSubmissions}
-                allSubmissions={allSubmissions}  // for Wins calculation
-                today={today}                      // to hide today’s outcome pre-reveal
+                allSubmissions={allSubmissions}
+                today={today}
               />
             </div>
           </main>
         )}
 
-        {/* History */}
         {!loading && view === "history" && (
-          <GameHistory
-            allSubmissions={allSubmissions}
-            today={today}
-            players={players}
-          />
+          <GameHistory allSubmissions={allSubmissions} today={today} players={players} />
         )}
 
-        {/* Head-to-Head */}
         {!loading && view === "h2h" && (
-          <HeadToHeadStats
-            allSubmissions={allSubmissions}
-            players={players}
-          />
+          <HeadToHeadStats allSubmissions={allSubmissions} players={players} />
         )}
 
         <footer className="text-center mt-12 text-gray-500 text-sm">
