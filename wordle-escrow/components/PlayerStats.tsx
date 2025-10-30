@@ -27,7 +27,6 @@ type Props = {
   players: string[]; // e.g., ["Joe", "Pete"]
   reveal: boolean;
   todaysSubmissions?: Record<string, DaySubmission>;
-  // Optional (for Wins calc)
   allSubmissions?: AllSubmissions;
   today?: string; // YYYY-MM-DD
 };
@@ -37,7 +36,7 @@ function asNumberScore(v: unknown): number | null {
   if (typeof v === "number" && Number.isFinite(v)) return v;
   const s = String(v).trim();
   if (!s) return null;
-  if (/^x/i.test(s)) return 7; // treat X as worse than 6
+  if (/^x/i.test(s)) return 7; // treat X as worse than 6 guesses
   const m = s.match(/^(\d+)/);
   return m ? Number(m[1]) : null;
 }
@@ -60,39 +59,50 @@ export default function PlayerStats({
   players,
   reveal,
   todaysSubmissions = {},
-  allSubmissions,
-  today,
+  allSubmissions = {},
+  today = "",
 }: Props) {
-  // —— Wins (optional; only if we have allSubmissions + today) ——
+  // Build a unified day-map that includes today after reveal (in case the hook hasn't folded it in yet).
+  const unifiedDays: AllSubmissions = useMemo(() => {
+    const copy: AllSubmissions = { ...allSubmissions };
+    if (reveal && today) {
+      const existing = copy[today] || {};
+      // non-destructive merge: today's local submissions override nothing, just fill in if present
+      copy[today] = { ...existing, ...todaysSubmissions };
+    }
+    return copy;
+  }, [allSubmissions, todaysSubmissions, reveal, today]);
+
+  // Compute cumulative wins per player.
+  // Count a win on days where BOTH players have numeric scores and they differ.
+  // Exclude today's outcome when !reveal.
   const winsByPlayer = useMemo(() => {
-    const base: Record<string, number> = {};
-    for (const p of players) base[p] = 0;
+    const wins: Record<string, number> = {};
+    for (const p of players) wins[p] = 0;
 
-    if (!allSubmissions || !today) return base;
-
-    const dates = Object.keys(allSubmissions);
+    const dates = Object.keys(unifiedDays).sort(); // order doesn’t matter for the count
     for (const date of dates) {
-      const day = allSubmissions[date] || {};
+      if (!today) continue;
+      if (date === today && !reveal) continue; // hide today pre-reveal
 
-      // hide today's outcome before reveal
-      if (date === today && !reveal) continue;
-
+      const day = unifiedDays[date] || {};
       if (players.length < 2) continue;
+
+      // We’re doing head-to-head for first two players (Joe vs Pete)
       const [p1, p2] = players;
 
       const s1 = asNumberScore(day[p1]?.score);
       const s2 = asNumberScore(day[p2]?.score);
-
       if (s1 == null || s2 == null) continue;
       if (s1 === s2) continue;
 
-      if (s1 < s2) base[p1] += 1;
-      else base[p2] += 1;
+      if (s1 < s2) wins[p1] += 1;
+      else wins[p2] += 1;
     }
-    return base;
-  }, [allSubmissions, players, reveal, today]);
+    return wins;
+  }, [unifiedDays, players, reveal, today]);
 
-  // —— Rows for the main stats table ——
+  // Prepare rows for display
   const rows = useMemo(() => {
     return players.map((p) => {
       const s = stats[p] || {};
@@ -108,32 +118,26 @@ export default function PlayerStats({
     });
   }, [players, stats, winsByPlayer]);
 
-  // —— Today's grids (shown only after reveal) ——
+  // Today’s grids (only after reveal)
   const todaysGrids = useMemo(() => {
     if (!reveal) return {};
     const obj: Record<string, string[]> = {};
     for (const p of players) {
-      const g = normalizeGrid(todaysSubmissions[p]?.grid);
-      obj[p] = g;
+      obj[p] = normalizeGrid(todaysSubmissions[p]?.grid);
     }
     return obj;
   }, [players, todaysSubmissions, reveal]);
 
-  // Determine if we should show a Wins column (only meaningful with 2+ players and data)
-  const showWins = players.length >= 2 && Object.values(winsByPlayer).some((v) => v > 0);
-
   return (
     <section aria-labelledby="player-stats-h" className="rounded-lg border border-gray-700 p-4">
-      <h3 id="player-stats-h" className="text-lg font-semibold mb-3">
-        Player Statistics
-      </h3>
+      <h3 id="player-stats-h" className="text-lg font-semibold mb-3">Player Statistics</h3>
 
       <div className="overflow-x-auto">
         <table className="min-w-full text-sm">
           <thead>
             <tr className="text-left border-b border-gray-700">
               <th className="py-2 pr-3">Player</th>
-              {showWins && <th className="py-2 pr-3 text-right">Wins</th>}
+              <th className="py-2 pr-3 text-right">Wins</th>
               <th className="py-2 pr-3 text-right">Games</th>
               <th className="py-2 pr-3 text-right">Avg</th>
               <th className="py-2 pr-3 text-right">Best</th>
@@ -145,7 +149,7 @@ export default function PlayerStats({
             {rows.map((r) => (
               <tr key={r.player} className="border-b border-gray-800">
                 <td className="py-2 pr-3 font-medium">{r.player}</td>
-                {showWins && <td className="py-2 pr-3 text-right">{r.wins}</td>}
+                <td className="py-2 pr-3 text-right">{r.wins}</td>
                 <td className="py-2 pr-3 text-right">{r.games}</td>
                 <td className="py-2 pr-3 text-right">
                   {r.games ? (Math.round((Number(r.avg) || 0) * 100) / 100).toFixed(2) : "—"}
@@ -159,7 +163,7 @@ export default function PlayerStats({
         </table>
       </div>
 
-      {/* Today's Guess Patterns (after reveal) */}
+      {/* Today’s Guess Patterns (after reveal) */}
       {reveal && (
         <div className="mt-4">
           <h4 className="text-sm font-semibold mb-2">Today’s Guess Patterns</h4>
