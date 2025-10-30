@@ -32,17 +32,17 @@ const GroupPage: React.FC = () => {
   const { groupId } = useParams<{ groupId: string }>();
   const location = useLocation();
 
-  // If you ever mount GroupPage at '/', redirect to your group (safety).
+  // If GroupPage is mounted without an id, send to your primary group.
   if (!groupId) {
     return <Navigate to="/group/main" replace />;
   }
 
-  // Fixed site title per your request
+  // Title/subtitle
   const groupTitle = 'Wordle Escrow';
-  const showSubtitle = false; // set to true if you want "Group: <id>" under the title
+  const showSubtitle = false; // set to true to show "Group: <id>" under title
   const subtitle = useMemo(() => (groupId ? `Group: ${groupId}` : ''), [groupId]);
 
-  // Roster: read group doc if present; union with Joe/Pete; cap at 10
+  // Load roster: merge Firestore group players with defaults, cap at 10
   const [players, setPlayers] = useState<string[]>(DEFAULT_PLAYERS);
   const [loadingRoster, setLoadingRoster] = useState(true);
 
@@ -71,19 +71,18 @@ const GroupPage: React.FC = () => {
     };
   }, [groupId]);
 
-  // Core data
+  // Core data (from your capped, one-time-read hook)
   const today = todayISO();
-  const fakeGroup = { id: groupId, name: groupTitle } as any;
+  const fakeGroup = { id: groupId, name: groupTitle, players } as any;
   const {
     stats,
     todaysSubmissions,
     allSubmissions,
     addSubmission,
-    saveAiSummary,
     loading: wordleDataLoading,
   } = useWordleData({ group: fakeGroup });
 
-  // Reveal logic (all submitted OR 1:00 PM CT) with quiet override
+  // Reveal logic (all-submitted OR 1:00 PM CT) with quiet ?reveal=1 override
   const { reveal } = useRevealStatus(groupId);
   const forceReveal = new URLSearchParams(location.search).get('reveal') === '1';
   const showReveal = forceReveal || reveal;
@@ -143,7 +142,7 @@ const GroupPage: React.FC = () => {
                 players={players}
               />
 
-              {/* Shows Submitted/Awaiting; hides grids until reveal */}
+              {/* Shows Submitted/Awaiting; hides grids/results until reveal */}
               <TodaysResults players={players} />
 
               {/* Reveal-gated extras (or via ?reveal=1 silently) */}
@@ -151,8 +150,8 @@ const GroupPage: React.FC = () => {
                 <>
                   <AiSummary
                     todaysSubmissions={todaysSubmissions}
-                    saveAiSummary={(text: string) => saveAiSummary(today, text)}
                     today={today}
+                    groupId={groupId}
                     existingSummary={allSubmissions[today]?.aiSummary}
                   />
                   <GiphyDisplay todaysSubmissions={todaysSubmissions} />
