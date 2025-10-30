@@ -94,7 +94,6 @@ const GroupPage: React.FC = () => {
                 players={players}
               />
 
-              {/* Shows Submitted/Awaiting; if your TodaysResults supports reveal+scores, pass reveal + todaysSubmissions */}
               <TodaysResults
                 players={players}
                 todaysSubmissions={todaysSubmissions}
