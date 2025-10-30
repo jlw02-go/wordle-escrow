@@ -1,237 +1,87 @@
 // components/ScoreInputForm.tsx
-import React from 'react';
-import { useParams } from 'react-router-dom';
+import React, { useMemo, useState } from "react";
+import { Submission } from "../hooks/useWordleData";
+import { parseWordleHeader, extractGrid } from "../utils/parsing";
 
-import { Submission, DailySubmissions } from '../types';
-import { parseWordleHeader, extractGrid } from '../utils/parsing';
-
-import { db } from '../firebase';
-import {
-  collection,
-  addDoc,
-  serverTimestamp,
-  doc,
-  setDoc,
-  arrayUnion,
-  getDoc,
-} from 'firebase/firestore';
-
-import { getDisplayName, setDisplayName as saveDisplayName } from '../utils/currentUser';
-
-interface ScoreInputFormProps {
-  addSubmission: (submission: Submission) => void;         // local state hook (noop OK)
-  todaysSubmissions: DailySubmissions;                     // can be {}
-  players: string[];                                       // roster-ish list
+interface Props {
+  addSubmission: (s: Omit<Submission, "groupId">) => void | Promise<void>;
+  todaysSubmissions: Record<string, Submission>;
+  players: ("Joe" | "Pete")[];
 }
 
-const DEFAULT_OPTIONS = ["Joe", "Pete"];
-const OTHER_VALUE = "__OTHER__";
+const ScoreInputForm: React.FC<Props> = ({ addSubmission, todaysSubmissions, players }) => {
+  const [player, setPlayer] = useState<"Joe" | "Pete" | "">("");
+  const [shareText, setShareText] = useState("");
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
 
-const ScoreInputForm: React.FC<ScoreInputFormProps> = ({
-  addSubmission,
-  todaysSubmissions,
-  players,
-}) => {
-  const { groupId } = useParams();
-
-  // Build dropdown list: always include Joe/Pete + unique players from props
-  const dropdownPlayers = React.useMemo(() => {
-    const set = new Set<string>(DEFAULT_OPTIONS);
-    if (Array.isArray(players)) {
-      for (const p of players) if (p) set.add(p);
-    }
-    return Array.from(set);
-  }, [players]);
-
-  // Preselect to saved name if available (but do NOT lock it)
-  const currentUser = getDisplayName();
-  const initialSelection = React.useMemo(() => {
-    if (currentUser && dropdownPlayers.includes(currentUser)) return currentUser;
-    return "";
-  }, [currentUser, dropdownPlayers]);
-
-  const [player, setPlayer] = React.useState<string>(initialSelection);
-  const [useOther, setUseOther] = React.useState(false);
-  const [otherName, setOtherName] = React.useState("");
-  const [shareText, setShareText] = React.useState('');
-  const [error, setError] = React.useState('');
-  const [success, setSuccess] = React.useState('');
-  const [submitting, setSubmitting] = React.useState(false);
-
-  React.useEffect(() => {
-    // If the list later contains currentUser, select it for convenience
-    if (!player && currentUser && dropdownPlayers.includes(currentUser)) {
-      setPlayer(currentUser);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dropdownPlayers, currentUser]);
-
-  const effectiveName = (useOther ? otherName : player).trim();
-  const alreadySubmitted = effectiveName && (todaysSubmissions as any)?.[effectiveName];
-
-  const onPlayerChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const val = e.target.value;
-    if (val === OTHER_VALUE) {
-      setUseOther(true);
-      setPlayer("");
-    } else {
-      setUseOther(false);
-      setOtherName("");
-      setPlayer(val);
-    }
-  };
+  const available = useMemo(
+    () => players.filter((p) => !todaysSubmissions[p]),
+    [players, todaysSubmissions]
+  );
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError('');
-    setSuccess('');
+    setError("");
+    setSuccess("");
 
-    const chosen = (useOther ? otherName : player).trim();
-    const text = (shareText || '').trim();
+    if (!player) return setError("Please select your name.");
+    if (!shareText.trim()) return setError("Please paste your Wordle score.");
 
-    if (!chosen) {
-      setError(useOther ? 'Please enter your name.' : 'Please select your name.');
-      return;
-    }
-    if (!text) {
-      setError('Please paste your Wordle score.');
-      return;
-    }
+    const lines = shareText.trim().split(/\r?\n/);
+    if (lines.length < 2) return setError("Invalid Wordle share text.");
 
-    const lines = text.split(/\r?\n/).filter(Boolean);
-    if (lines.length < 2) {
-      setError('Invalid Wordle share format. Please paste the full text from the share button.');
-      return;
-    }
+    const header = parseWordleHeader(lines[0]);
+    if (!header) return setError('Could not parse header (e.g., "Wordle 123 4/6").');
 
-    const headerData = parseWordleHeader(lines[0]);
-    if (!headerData) {
-      setError('Could not parse Wordle score. Make sure it includes the header (e.g., "Wordle 123 4/6").');
-      return;
-    }
-
-    if (alreadySubmitted) {
-      setError('You already submitted today.');
-      return;
-    }
-
-    const { puzzleNumber, score } = headerData;
+    const { puzzleNumber, score } = header;
     const grid = extractGrid(lines);
 
-    const today = new Date(
-      new Date().getTime() - new Date().getTimezoneOffset() * 60 * 1000
-    )
+    const now = new Date();
+    const today = new Date(now.getTime() - now.getTimezoneOffset() * 60000)
       .toISOString()
-      .split('T')[0];
+      .split("T")[0];
 
-    const submission: Submission = {
-      player: chosen,
+    const submission: Omit<Submission, "groupId"> = {
+      player,
       date: today,
       score,
       grid,
       puzzleNumber,
     };
-
-    setSubmitting(true);
-    try {
-      // If they typed a new name, create/merge the group doc so it persists
-      if (useOther && chosen && db && groupId) {
-        const gref = doc(db, "groups", groupId);
-        // Ensure doc exists and add the player (no duplicates)
-        await setDoc(
-          gref,
-          { name: groupId, players: arrayUnion(chosen) } as any,
-          { merge: true }
-        );
-        saveDisplayName(chosen);
-      }
-
-      // Local update (keeps existing page behavior)
-      addSubmission(submission);
-
-      // Persist to Firestore
-      if (!db) throw new Error('Firestore not initialized');
-      await addDoc(collection(db, 'submissions'), {
-        groupId: groupId ?? 'default',
-        player: chosen,
-        date: today,
-        score,
-        grid,
-        puzzleNumber,
-        createdAt: serverTimestamp(),
-      });
-
-      setSuccess(`Thanks, ${chosen}! Your score has been submitted.`);
-      // Keep their name selected for convenience
-      setPlayer(chosen);
-      setUseOther(false);
-      setOtherName("");
-      setShareText('');
-    } catch (err: any) {
-      console.error('Failed to save to Firestore:', err?.code, err?.message, err);
-      setError('Saved locally, but could not save to the server. Please try again later.');
-    } finally {
-      setSubmitting(false);
-    }
+    await addSubmission(submission);
+    setSuccess(`Thanks, ${player}! Your score has been submitted.`);
+    setShareText("");
   };
-
-  const submitDisabled = submitting || !effectiveName || !!alreadySubmitted;
 
   return (
     <div className="bg-gray-800 p-6 rounded-lg shadow-lg">
       <h2 className="text-2xl font-bold mb-4">Submit Today&apos;s Score</h2>
-
       <form onSubmit={onSubmit} className="space-y-4">
-        {/* Player select */}
         <div>
-          <label
-            htmlFor="player-select"
-            className="block text-sm font-medium text-gray-300 mb-1"
-          >
-            Player
-          </label>
-
+          <label className="block text-sm font-medium text-gray-300 mb-1">Player</label>
           <select
-            id="player-select"
-            value={useOther ? OTHER_VALUE : player}
-            onChange={onPlayerChange}
+            value={player}
+            onChange={(e) => setPlayer(e.target.value as "Joe" | "Pete")}
             className="w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-wordle-green"
           >
-            <option value="" disabled>Select your name</option>
-            {dropdownPlayers.map((p) => (
-              <option key={p} value={p}>{p}</option>
+            <option value="" disabled>
+              Select your name
+            </option>
+            {available.map((p) => (
+              <option key={p} value={p}>
+                {p}
+              </option>
             ))}
-            <option value={OTHER_VALUE}>Other… (add your name)</option>
           </select>
-
-          {useOther && (
-            <input
-              type="text"
-              value={otherName}
-              onChange={(e) => setOtherName(e.target.value)}
-              placeholder="Enter your name"
-              className="mt-2 w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-wordle-green"
-              maxLength={40}
-            />
-          )}
-
-          {effectiveName && (todaysSubmissions as any)?.[effectiveName] && (
-            <p className="mt-1 text-xs text-gray-400">
-              {effectiveName} has already submitted today.
-            </p>
+          {available.length === 0 && (
+            <p className="mt-1 text-xs text-gray-400">Both players have submitted for today.</p>
           )}
         </div>
 
-        {/* Wordle paste box */}
         <div>
-          <label
-            htmlFor="share-text"
-            className="block text-sm font-medium text-gray-300 mb-1"
-          >
-            Paste Wordle Score
-          </label>
+          <label className="block text-sm font-medium text-gray-300 mb-1">Paste Wordle Score</label>
           <textarea
-            id="share-text"
             rows={6}
             value={shareText}
             onChange={(e) => setShareText(e.target.value)}
@@ -242,7 +92,7 @@ const ScoreInputForm: React.FC<ScoreInputFormProps> = ({
 🟩🟩⬜⬜🟩
 🟩🟩🟩🟩🟩`}
             className="w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-wordle-green placeholder-gray-500"
-          ></textarea>
+          />
         </div>
 
         {error && <p className="text-red-400 text-sm">{error}</p>}
@@ -250,14 +100,10 @@ const ScoreInputForm: React.FC<ScoreInputFormProps> = ({
 
         <button
           type="submit"
-          disabled={submitDisabled}
+          disabled={available.length === 0}
           className="w-full bg-wordle-green text-white font-bold py-2 px-4 rounded-md hover:bg-green-600 transition duration-200 disabled:bg-gray-500 disabled:cursor-not-allowed"
         >
-          {submitting
-            ? 'Submitting…'
-            : submitDisabled
-            ? 'Already submitted'
-            : 'Submit Score'}
+          {available.length > 0 ? "Submit Score" : "All Scores Submitted!"}
         </button>
       </form>
     </div>
