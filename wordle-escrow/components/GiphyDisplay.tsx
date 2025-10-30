@@ -196,7 +196,7 @@ const GiphyDisplay: React.FC<Props> = ({
     if (!reveal) {
       return (
         <p className="text-sm text-gray-400">
-          GIFs are hidden until both players submit or it’s 1:00 PM Central.
+          GIFs are hidden until both players submit or it’s 7:00 PM Central.
         </p>
       );
     }
@@ -315,3 +315,4 @@ const GiphyDisplay: React.FC<Props> = ({
 };
 
 export default GiphyDisplay;
+
