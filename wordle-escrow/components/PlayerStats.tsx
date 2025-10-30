@@ -1,107 +1,164 @@
 // components/PlayerStats.tsx
-import React from "react";
-import { Submission } from "../hooks/useWordleData";
+import React, { useMemo } from "react";
 
-type StatsRecord = {
-  gamesPlayed: number;
-  totalScore: number;
-  avgScore: number;
+type PerPlayerStats = {
+  gamesPlayed?: number;
+  avgScore?: number;
+  bestScore?: number;
+  worstScore?: number;
+  streak?: number;
+  lastPlayed?: number | string;
 };
+
+type AllSubmissions = Record<
+  string, // YYYY-MM-DD
+  Record<
+    string, // player name
+    {
+      score?: number | string;
+      puzzleNumber?: number;
+      grid?: string[] | string;
+      createdAt?: string;
+    }
+  >
+>;
 
 type Props = {
-  stats: Record<string, StatsRecord>;
-  players: ("Joe" | "Pete")[];
-  /** Hide stats until reveal is true */
-  reveal?: boolean;
-  /** For showing today's guess patterns once revealed */
-  todaysSubmissions?: Record<string, Submission | any>;
+  stats: Record<string, PerPlayerStats>;
+  players: string[]; // e.g., ["Joe", "Pete"]
+  reveal: boolean;
+  todaysSubmissions?: Record<string, any>;
+  // NEW: we’ll compute Wins by scanning daily submissions
+  allSubmissions: AllSubmissions;
+  // NEW: to avoid leaking today’s winner before reveal
+  today: string; // "YYYY-MM-DD"
 };
 
-/** Normalize any stored grid value into an array of lines */
-function asLines(grid: unknown): string[] {
-  if (Array.isArray(grid)) return grid.filter(Boolean).map(String);
-  if (typeof grid === "string") return grid.split(/\r?\n/).filter(Boolean);
-  return [];
+function asNumberScore(v: unknown): number | null {
+  if (v == null) return null;
+  // Common shapes: 3, "3", "3/6", "X/6"
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  const s = String(v).trim();
+  if (!s) return null;
+  if (/^x/i.test(s)) return 7; // treat X as 7 guesses (worse than 6)
+  const m = s.match(/^(\d+)/);
+  return m ? Number(m[1]) : null;
 }
 
-const PlayerStats: React.FC<Props> = ({
-  stats = {},
+export default function PlayerStats({
+  stats,
   players,
-  reveal = false,
-  todaysSubmissions = {},
-}) => {
-  if (!reveal) {
-    // Hide all numbers/details before reveal time or all-submitted
-    return (
-      <aside className="rounded-lg border border-gray-700 p-4">
-        <h3 className="text-lg font-semibold mb-2">Player Statistics</h3>
-        <p className="text-sm text-gray-400">
-          Stats are hidden until both players submit or it’s 1:00 PM Central.
-        </p>
-      </aside>
-    );
-  }
+  reveal,
+  allSubmissions,
+  today,
+}: Props) {
+  // Compute cumulative Wins per player.
+  // A "win" is counted on days where BOTH players have a numeric score and those scores differ.
+  // We exclude *today* if reveal === false to avoid leaking the outcome.
+  const winsByPlayer = useMemo(() => {
+    const wins: Record<string, number> = {};
+    for (const p of players) wins[p] = 0;
 
-  const rows = players.map((p) => {
-    const s = stats[p] || { gamesPlayed: 0, totalScore: 0, avgScore: 0 };
-    return { player: p, ...s };
-  });
+    const dates = Object.keys(allSubmissions || {});
+    for (const date of dates) {
+      const day = allSubmissions[date] || {};
+      // Skip today if not revealed yet
+      if (date === today && !reveal) continue;
+
+      // Only handle head-to-head for Joe & Pete for now (or first two players present).
+      // If you later support more than 2 players, you can extend this to a round-robin per day.
+      if (players.length < 2) continue;
+      const [p1, p2] = players;
+
+      const s1 = asNumberScore(day[p1]?.score);
+      const s2 = asNumberScore(day[p2]?.score);
+
+      if (s1 == null || s2 == null) continue; // must have both
+      if (s1 === s2) continue; // tie → no win
+
+      if (s1 < s2) {
+        wins[p1] = (wins[p1] || 0) + 1;
+      } else {
+        wins[p2] = (wins[p2] || 0) + 1;
+      }
+    }
+    return wins;
+  }, [allSubmissions, players, reveal, today]);
+
+  // Prepare rows in a stable player order
+  const rows = useMemo(() => {
+    return players.map((p) => {
+      const s = stats[p] || {};
+      return {
+        player: p,
+        games: s.gamesPlayed ?? 0,
+        avg: s.avgScore ?? 0,
+        best: s.bestScore ?? null,
+        worst: s.worstScore ?? null,
+        streak: s.streak ?? 0,
+        wins: winsByPlayer[p] ?? 0,
+      };
+    });
+  }, [players, stats, winsByPlayer]);
 
   return (
-    <aside className="rounded-lg border border-gray-700 p-4">
-      <h3 className="text-lg font-semibold mb-3">Player Statistics</h3>
+    <section aria-labelledby="player-stats-h" className="rounded-lg border border-gray-700 p-4">
+      <h3 id="player-stats-h" className="text-lg font-semibold mb-3">
+        Player Statistics
+      </h3>
 
-      {/* Aggregate stats table */}
+      {/* Hide stats table if not revealed? You already hide “today’s” details elsewhere.
+          Here we allow lifetime stats (minus today if hidden). If you want to hide the table
+          entirely before reveal, uncomment the block below:
+      
+      {!reveal && (
+        <p className="text-sm text-gray-500">
+          Statistics are hidden until both players submit or it’s 1:00 PM Central.
+        </p>
+      )}
+      {reveal && (...table...)}
+      */}
+
       <div className="overflow-x-auto">
         <table className="min-w-full text-sm">
-          <thead className="text-gray-300">
-            <tr>
-              <th className="text-left py-2 pr-3">Player</th>
-              <th className="text-right py-2 px-3">Games</th>
-              <th className="text-right py-2 px-3">Total</th>
-              <th className="text-right py-2 pl-3">Avg</th>
+          <thead>
+            <tr className="text-left border-b border-gray-700">
+              <th className="py-2 pr-3">Player</th>
+              <th className="py-2 pr-3 text-right">Wins</th>
+              <th className="py-2 pr-3 text-right">Games</th>
+              <th className="py-2 pr-3 text-right">Avg</th>
+              <th className="py-2 pr-3 text-right">Best</th>
+              <th className="py-2 pr-3 text-right">Worst</th>
+              <th className="py-2 pr-0 text-right">Streak</th>
             </tr>
           </thead>
-          <tbody className="text-gray-100">
+          <tbody>
             {rows.map((r) => (
-              <tr key={r.player} className="border-t border-gray-800">
-                <td className="py-2 pr-3">{r.player}</td>
-                <td className="py-2 px-3 text-right">{r.gamesPlayed}</td>
-                <td className="py-2 px-3 text-right">{r.totalScore}</td>
-                <td className="py-2 pl-3 text-right">{r.avgScore.toFixed(2)}</td>
+              <tr key={r.player} className="border-b border-gray-800">
+                <td className="py-2 pr-3 font-medium">{r.player}</td>
+                <td className="py-2 pr-3 text-right">{r.wins}</td>
+                <td className="py-2 pr-3 text-right">{r.games}</td>
+                <td className="py-2 pr-3 text-right">
+                  {r.games ? (Math.round((Number(r.avg) || 0) * 100) / 100).toFixed(2) : "—"}
+                </td>
+                <td className="py-2 pr-3 text-right">
+                  {r.best != null ? r.best : "—"}
+                </td>
+                <td className="py-2 pr-3 text-right">
+                  {r.worst != null ? r.worst : "—"}
+                </td>
+                <td className="py-2 pr-0 text-right">{r.streak || 0}</td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
 
-      {/* Today's NYT guess patterns (emoji grids) */}
-      <div className="mt-5">
-        <h4 className="text-md font-semibold mb-2">Today’s Guess Patterns</h4>
-        {players.map((p) => {
-          const sub = todaysSubmissions[p];
-          const gridLines = asLines(sub?.grid);
-          return (
-            <div key={p} className="mb-3 rounded border border-gray-800 p-2">
-              <div className="flex items-center justify-between">
-                <span className="font-medium">{p}</span>
-                <span className="text-sm text-gray-400">
-                  {sub ? `${Number(sub.score)}/6` : "—"}
-                </span>
-              </div>
-              {gridLines.length ? (
-                <pre className="mt-2 text-sm leading-5 whitespace-pre-wrap text-gray-300">
-                  {gridLines.join("\n")}
-                </pre>
-              ) : (
-                <p className="mt-2 text-xs text-gray-500">No grid available.</p>
-              )}
-            </div>
-          );
-        })}
-      </div>
-    </aside>
+      {!reveal && (
+        <p className="mt-2 text-xs text-gray-500">
+          Today’s head-to-head result is hidden until both submit or it’s 1:00 PM Central. Wins exclude today until reveal.
+        </p>
+      )}
+    </section>
   );
-};
-
-export default PlayerStats;
+}
