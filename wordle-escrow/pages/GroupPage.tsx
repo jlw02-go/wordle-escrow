@@ -1,6 +1,6 @@
 // pages/GroupPage.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useParams, Link, Navigate, useLocation } from "react-router-dom";
+import { useParams, Navigate, useLocation } from "react-router-dom";
 
 import ScoreInputForm from "../components/ScoreInputForm";
 import TodaysResults from "../components/TodaysResults";
@@ -25,15 +25,11 @@ function getCurrentUserName(): string {
 const GroupPage: React.FC = () => {
   const { groupId } = useParams<{ groupId: string }>();
   const location = useLocation();
-
-  // If no group in URL, default to "main"
   if (!groupId) return <Navigate to="/group/main" replace />;
 
-  // Title + subtitle
   const groupTitle = "Wordle Escrow";
   const subtitle = "Safeguarding Wordle Bragging Rights Since 2025";
 
-  // Keep browser tab consistent
   useEffect(() => {
     document.title = groupTitle;
     return () => {
@@ -41,10 +37,8 @@ const GroupPage: React.FC = () => {
     };
   }, []);
 
-  // App scope for now: Joe & Pete
   const players: ("Joe" | "Pete")[] = ["Joe", "Pete"];
 
-  // Hook: data layer
   const fakeGroup = useMemo(() => ({ id: groupId }), [groupId]);
   const {
     stats,
@@ -55,32 +49,24 @@ const GroupPage: React.FC = () => {
     today,
   } = useWordleData({ group: fakeGroup });
 
-  // Reveal logic
   const submittedCount = Object.keys(todaysSubmissions || {}).length;
   const forceReveal = new URLSearchParams(location.search).get("reveal") === "1";
   const revealByAll = submittedCount >= players.length;
   const revealByTime = (() => {
-    // Reveal at 1:00 PM CT for *today*
-    // Using a fixed -05:00 offset is acceptable here; refine later if you want DST-accurate logic.
     const now = new Date();
     const target = new Date(`${today}T13:00:00-05:00`);
     return now.getTime() >= target.getTime();
   })();
   const showReveal = forceReveal || revealByAll || revealByTime;
 
-  // Auto-generate daily summary once when reveal is true
   const autoRanRef = useRef(false);
   useEffect(() => {
     if (!showReveal) return;
     if (autoRanRef.current) return;
     autoRanRef.current = true;
-
-    generateSummaryIfNeeded(groupId, today, todaysSubmissions).catch(() => {
-      // Errors are logged to Firestore status; we don't block UI here
-    });
+    generateSummaryIfNeeded(groupId, today, todaysSubmissions).catch(() => {});
   }, [showReveal, groupId, today, todaysSubmissions]);
 
-  // Tabs
   const [view, setView] = useState<"today" | "history" | "h2h">("today");
   const currentUser = useMemo(() => getCurrentUserName(), []);
 
@@ -91,22 +77,14 @@ const GroupPage: React.FC = () => {
           <h1 className="text-4xl sm:text-5xl font-bold tracking-wider uppercase">
             {groupTitle}
           </h1>
-          <p className="mt-2 text-sm sm:text-base text-gray-400">
-            {subtitle}
-          </p>
-          <div className="flex justify-center items-center gap-4 mt-3">
-            <Link
-              to="/"
-              className="text-gray-400 hover:text-wordle-green transition-colors text-sm"
-            >
-              Home
-            </Link>
-          </div>
+          <p className="mt-2 text-sm sm:text-base text-gray-400">{subtitle}</p>
         </header>
 
-        {/* Tabs */}
         <div className="mb-8 border-b border-gray-700">
-          <nav className="-mb-px flex space-x-2 sm:space-x-6 justify-center" aria-label="Tabs">
+          <nav
+            className="-mb-px flex space-x-2 sm:space-x-6 justify-center"
+            aria-label="Tabs"
+          >
             <TabButton currentView={view} viewName="today" setView={setView}>
               Today&apos;s Game
             </TabButton>
@@ -129,20 +107,18 @@ const GroupPage: React.FC = () => {
                 todaysSubmissions={todaysSubmissions}
                 players={players}
               />
-
               <TodaysResults
                 players={players}
                 todaysSubmissions={todaysSubmissions}
                 reveal={showReveal}
               />
-
-              {/* Auto summary display (listens to Firestore) */}
               <AiSummary today={today} groupId={groupId} />
-
-              {/* Multi-GIF feed, reveal-gated */}
-              <GiphyDisplay today={today} reveal={showReveal} currentUser={currentUser} />
+              <GiphyDisplay
+                today={today}
+                reveal={showReveal}
+                currentUser={currentUser}
+              />
             </div>
-
             <div className="lg:col-span-1">
               <PlayerStats
                 stats={stats}
@@ -155,11 +131,18 @@ const GroupPage: React.FC = () => {
         )}
 
         {!loading && view === "history" && (
-          <GameHistory allSubmissions={allSubmissions} today={today} players={players} />
+          <GameHistory
+            allSubmissions={allSubmissions}
+            today={today}
+            players={players}
+          />
         )}
 
         {!loading && view === "h2h" && (
-          <HeadToHeadStats allSubmissions={allSubmissions} players={players} />
+          <HeadToHeadStats
+            allSubmissions={allSubmissions}
+            players={players}
+          />
         )}
 
         <footer className="text-center mt-12 text-gray-500 text-sm">
