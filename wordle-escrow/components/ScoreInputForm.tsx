@@ -1,5 +1,5 @@
 // components/ScoreInputForm.tsx
-import React, { useState, useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import { Submission, DailySubmissions } from "../types";
 import { parseWordleHeader, extractGrid } from "../utils/parsing";
 
@@ -7,7 +7,7 @@ interface ScoreInputFormProps {
   addSubmission: (submission: Submission) => void;
   todaysSubmissions: DailySubmissions;
   players: string[];
-  today: string;                 // 🔴 canonical Chicago-day from the hook
+  today: string; // canonical Chicago-day (YYYY-MM-DD) passed from GroupPage/useWordleData
 }
 
 const ScoreInputForm: React.FC<ScoreInputFormProps> = ({
@@ -55,7 +55,6 @@ const ScoreInputForm: React.FC<ScoreInputFormProps> = ({
     const { puzzleNumber, score } = headerData;
     const grid = extractGrid(lines);
 
-    // 🔴 Use the canonical date passed from GroupPage/useWordleData
     const submission: Submission = {
       player,
       date: today,
@@ -84,9 +83,13 @@ const ScoreInputForm: React.FC<ScoreInputFormProps> = ({
             onChange={(e) => setPlayer(e.target.value)}
             className="w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-wordle-green"
           >
-            <option value="" disabled>Select your name</option>
+            <option value="" disabled>
+              Select your name
+            </option>
             {availablePlayers.map((p) => (
-              <option key={p} value={p}>{p}</option>
+              <option key={p} value={p}>
+                {p}
+              </option>
             ))}
           </select>
         </div>
@@ -107,7 +110,7 @@ const ScoreInputForm: React.FC<ScoreInputFormProps> = ({
 🟩🟩⬜⬜🟩
 🟩🟩🟩🟩🟩`}
             className="w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-wordle-green placeholder-gray-500"
-          ></textarea>
+          />
         </div>
 
         {error && <p className="text-red-400 text-sm">{error}</p>}
