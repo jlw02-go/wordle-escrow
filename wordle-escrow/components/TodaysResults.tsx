@@ -1,92 +1,237 @@
 // components/TodaysResults.tsx
-import React, { useMemo } from "react";
-import { Submission } from "../hooks/useWordleData";
+import React, { useEffect, useMemo, useState } from "react";
+import { useParams } from "react-router-dom";
+
+// Firestore
+import { db } from "../firebase";
+import {
+  collection,
+  getDocs,
+  query,
+  where,
+  orderBy,
+  Timestamp,
+  doc,
+  getDoc,
+} from "firebase/firestore";
 
 type Props = {
-  /** Exact roster to display (hard-coded Joe/Pete in GroupPage) */
-  players: ("Joe" | "Pete")[];
-  /** Today’s submissions keyed by player name */
-  todaysSubmissions?: Record<string, Submission | any>;
-  /** Whether to reveal scores/grids (passed from GroupPage) */
-  reveal?: boolean;
+  todaysSubmissions?: Record<string, any>;
+  players?: string[];
+  reveal?: boolean; // if provided by parent, it overrides internal 1pm/all-submitted check
 };
 
-/** Normalize any stored grid value into an array of lines */
-function asLines(grid: unknown): string[] {
-  if (Array.isArray(grid)) return grid.filter(Boolean).map(String);
-  if (typeof grid === "string") return grid.split(/\r?\n/).filter(Boolean);
-  return [];
+const TZ = "America/Chicago";
+
+function todayISO() {
+  const fmt = new Intl.DateTimeFormat("en-CA", {
+    timeZone: TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  return fmt.format(new Date()); // YYYY-MM-DD
 }
 
-const TodaysResults: React.FC<Props> = ({
-  players,
-  todaysSubmissions = {},
-  reveal = false,
-}) => {
-  const submitted = useMemo(
-    () => new Set(Object.keys(todaysSubmissions || {})),
-    [todaysSubmissions]
-  );
-  const awaiting = useMemo(
-    () => players.filter((p) => !submitted.has(p)),
-    [players, submitted]
-  );
+function chicagoDayRange(dayISO: string) {
+  const start = new Date(`${dayISO}T00:00:00`);
+  const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+  return { start, end };
+}
+
+function isRevealReached(dayISO: string) {
+  const today = todayISO();
+  if (dayISO !== today) return true;
+  const now = new Date();
+  // 1:00 PM Central reveal (simple offset; good enough for now)
+  const thirteenCT = new Date(`${today}T13:00:00-05:00`);
+  return now.getTime() >= thirteenCT.getTime();
+}
+
+type SubmissionRow = {
+  id: string;
+  player: string;
+  score: number | string;
+  puzzleNumber: number;
+  createdAt: string; // ISO
+};
+
+export default function TodaysResults({ players, reveal }: Props) {
+  const { groupId } = useParams();
+  const [loading, setLoading] = useState(true);
+  const [roster, setRoster] = useState<string[]>([]);
+  const [rows, setRows] = useState<SubmissionRow[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  const day = todayISO();
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!db || !groupId) return;
+
+    async function load() {
+      try {
+        setLoading(true);
+        setError(null);
+
+        // 1) roster: prefer Firestore group.players if present; else fallback to prop players
+        const gref = doc(db, "groups", groupId);
+        const gsnap = await getDoc(gref);
+        let safePlayers: string[] = [];
+        if (gsnap.exists() && Array.isArray((gsnap.data() as any).players)) {
+          safePlayers = ((gsnap.data() as any).players as string[]).slice(0, 10);
+        } else if (Array.isArray(players) && players.length) {
+          safePlayers = players.slice(0, 10);
+        }
+        if (!cancelled) setRoster(safePlayers);
+
+        // 2) submissions for today
+        const { start, end } = chicagoDayRange(day);
+        const baseFilters = [
+          where("groupId", "==", groupId),
+          where("createdAt", ">=", Timestamp.fromDate(start)),
+          where("createdAt", "<", Timestamp.fromDate(end)),
+        ];
+
+        let list: SubmissionRow[] = [];
+        try {
+          const qRef = query(
+            collection(db, "submissions"),
+            ...baseFilters,
+            orderBy("createdAt", "desc") // requires composite index; we fall back below if missing
+          );
+          const snap = await getDocs(qRef);
+          list = (snap?.docs || []).map((d) => {
+            const data: any = d.data() ?? {};
+            const createdISO = data.createdAt?.toDate
+              ? data.createdAt.toDate().toISOString()
+              : new Date().toISOString();
+            return {
+              id: d.id,
+              player: data.player ?? "",
+              score: data.score ?? "",
+              puzzleNumber: data.puzzleNumber ?? 0,
+              createdAt: createdISO,
+            };
+          });
+        } catch (e: any) {
+          // If index error, retry without orderBy (client order isn’t critical here)
+          if (e?.code === "failed-precondition") {
+            const qRef = query(collection(db, "submissions"), ...baseFilters);
+            const snap = await getDocs(qRef);
+            list = (snap?.docs || []).map((d) => {
+              const data: any = d.data() ?? {};
+              const createdISO = data.createdAt?.toDate
+                ? data.createdAt.toDate().toISOString()
+                : new Date().toISOString();
+              return {
+                id: d.id,
+                player: data.player ?? "",
+                score: data.score ?? "",
+                puzzleNumber: data.puzzleNumber ?? 0,
+                createdAt: createdISO,
+              };
+            });
+          } else {
+            throw e;
+          }
+        }
+
+        if (!cancelled) {
+          setRows(Array.isArray(list) ? list : []);
+        }
+      } catch (e: any) {
+        console.error("[TodaysResults] load error:", e?.message || e);
+        if (!cancelled) setError("Couldn’t load results.");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [groupId, day, players]);
+
+  // Who has submitted today (case-insensitive set)
+  const submittedBy = useMemo(() => {
+    const list = Array.isArray(rows) ? rows : [];
+    return new Set(list.map((r) => (r.player || "").toLowerCase()));
+  }, [rows]);
+
+  // Determine reveal:
+  // - If parent passed `reveal`, respect it
+  // - Else: reveal by all-on-roster submitted OR after 1pm CT
+  const allSubmitted =
+    Array.isArray(roster) &&
+    roster.length > 0 &&
+    roster.every((p) => submittedBy.has((p || "").toLowerCase()));
+
+  const shouldReveal = typeof reveal === "boolean" ? reveal : allSubmitted || isRevealReached(day);
+
+  if (!groupId) return null;
+  if (loading) return <div>Loading Today’s Results…</div>;
+  if (error) return <div role="alert">{error}</div>;
 
   return (
-    <section aria-labelledby="today-h" className="rounded-lg border border-gray-700 p-4">
-      <h2 id="today-h" className="text-xl font-semibold">Today’s Results</h2>
+    <section aria-labelledby="today-h">
+      <h2 id="today-h" className="text-xl font-semibold">
+        Today’s Results ({day})
+      </h2>
 
-      {/* Status */}
-      <div className="space-y-2 mt-2">
-        <p className="text-sm text-gray-300">
-          <span className="font-semibold">Submitted:</span>{" "}
-          {players.filter((p) => submitted.has(p)).length > 0
-            ? players.filter((p) => submitted.has(p)).join(", ")
-            : "None yet"}
-        </p>
-        <p className="text-sm text-gray-300">
-          <span className="font-semibold">Awaiting:</span>{" "}
-          {awaiting.length > 0 ? awaiting.join(", ") : "No one — all set!"}
-        </p>
-      </div>
-
-      {/* Pre-reveal guidance */}
-      {!reveal && (
-        <div className="mt-3 rounded-md border border-gray-700 bg-gray-800/50 p-3 text-sm text-gray-300">
-          Results are hidden until <span className="font-semibold">both players</span> submit
-          or it’s <span className="font-semibold">1:00 PM Central</span>.
-        </div>
-      )}
-
-      {/* Revealed content */}
-      {reveal && (
-        <div className="mt-4">
-          {players.map((p) => {
-            const s = todaysSubmissions[p];
-            const gridLines = asLines(s?.grid);
-            return (
-              <div key={p} className="rounded border border-gray-700 p-3 mb-2">
-                <div className="flex items-center justify-between">
-                  <strong>{p}</strong>
-                  {s ? <span>{Number(s.score)}/6</span> : <span className="text-gray-500">—</span>}
-                </div>
-                {gridLines.length ? (
-                  <pre className="mt-2 text-sm leading-5 whitespace-pre-wrap text-gray-300">
-                    {gridLines.join("\n")}
-                  </pre>
-                ) : (
-                  <p className="mt-2 text-xs text-gray-500">No grid available.</p>
-                )}
-              </div>
-            );
-          })}
-          {players.every((p) => !todaysSubmissions[p]) && (
-            <p className="text-sm text-gray-500 mt-2">No results yet for today.</p>
+      {!shouldReveal ? (
+        <div className="mt-3 rounded-lg border p-3">
+          <p className="mb-2 text-sm text-gray-600">
+            Results are hidden until all players submit or 1:00 PM America/Chicago.
+          </p>
+          {(!Array.isArray(roster) || roster.length === 0) ? (
+            <p className="text-sm text-gray-500">No players are in this group yet.</p>
+          ) : (
+            <ul className="space-y-2">
+              {roster.map((p) => {
+                const name = p || "";
+                const done = submittedBy.has(name.toLowerCase());
+                return (
+                  <li key={name} className="flex items-center justify-between">
+                    <span className="font-medium">{name}</span>
+                    {done ? (
+                      <span className="text-green-600 text-sm">submitted</span>
+                    ) : (
+                      <span className="text-gray-500 text-sm">awaiting submission</span>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
           )}
         </div>
+      ) : (
+        <>
+          {(!Array.isArray(rows) || rows.length === 0) ? (
+            <p className="mt-3 text-sm text-gray-500">No results yet for today.</p>
+          ) : (
+            <ul className="mt-3 space-y-3">
+              {rows.map((r) => (
+                <li key={r.id} className="rounded-lg border p-3">
+                  <div className="flex items-center justify-between">
+                    <strong>{r.player}</strong>
+                    <span>Score: {String(r.score)}</span>
+                  </div>
+                  <div className="mt-1 text-xs text-gray-500">
+                    Wordle #{r.puzzleNumber} • Submitted{" "}
+                    {new Date(r.createdAt).toLocaleTimeString([], {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}
+                  </div>
+                  {/* 🔕 Guess patterns intentionally removed from today's list */}
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
       )}
     </section>
   );
-};
-
-export default TodaysResults;
+}
