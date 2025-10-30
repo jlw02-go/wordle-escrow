@@ -13,15 +13,6 @@ import GiphyDisplay from "../components/GiphyDisplay";
 import { useWordleData } from "../hooks/useWordleData";
 import { generateSummaryIfNeeded } from "../utils/autoSummary";
 
-function getCurrentUserName(): string {
-  try {
-    const v = localStorage.getItem("displayName");
-    return v && v.trim() ? v.trim() : "";
-  } catch {
-    return "";
-  }
-}
-
 // 7:00 PM Central reveal helper
 function chicagoAtOrAfter(hour24: number, minute: number = 0) {
   const parts = new Intl.DateTimeFormat("en-US", {
@@ -30,9 +21,18 @@ function chicagoAtOrAfter(hour24: number, minute: number = 0) {
     minute: "2-digit",
     hour12: false,
   }).formatToParts(new Date());
-  const hh = parseInt(parts.find(p => p.type === "hour")?.value || "0", 10);
-  const mm = parseInt(parts.find(p => p.type === "minute")?.value || "0", 10);
+  const hh = parseInt(parts.find((p) => p.type === "hour")?.value || "0", 10);
+  const mm = parseInt(parts.find((p) => p.type === "minute")?.value || "0", 10);
   return hh > hour24 || (hh === hour24 && mm >= minute);
+}
+
+function getCurrentUserName(): string {
+  try {
+    const v = localStorage.getItem("displayName");
+    return v && v.trim() ? v.trim() : "";
+  } catch {
+    return "";
+  }
 }
 
 const GroupPage: React.FC = () => {
@@ -50,10 +50,10 @@ const GroupPage: React.FC = () => {
     };
   }, []);
 
-  // Fixed roster for now
+  // Fixed roster (Joe & Pete)
   const players: ("Joe" | "Pete")[] = ["Joe", "Pete"];
 
-  // Data
+  // Data hook
   const fakeGroup = useMemo(() => ({ id: groupId }), [groupId]);
   const {
     stats,
@@ -64,14 +64,14 @@ const GroupPage: React.FC = () => {
     today,
   } = useWordleData({ group: fakeGroup });
 
-  // Reveal: both submitted OR 7:00 PM Central OR ?reveal=1
+  // Reveal: both submitted OR 7:00 PM CT OR ?reveal=1
   const submittedCount = Object.keys(todaysSubmissions || {}).length;
   const forceReveal = new URLSearchParams(location.search).get("reveal") === "1";
   const revealByAll = submittedCount >= players.length;
   const revealByTime = chicagoAtOrAfter(19, 0); // 7:00 PM CT
   const showReveal = forceReveal || revealByAll || revealByTime;
 
-  // Auto-summary after reveal (once per page load)
+  // Auto-generate daily summary after reveal (once per page load)
   const autoRanRef = useRef(false);
   useEffect(() => {
     if (!showReveal) return;
@@ -125,14 +125,14 @@ const GroupPage: React.FC = () => {
                 revealCutoffLabel="7:00 PM America/Chicago"
               />
 
-              {/* Always render; it self-hides button once a summary exists */}
+              {/* Always render; component hides button when a summary is present */}
               <AiSummary today={today} groupId={groupId!} />
 
               <GiphyDisplay
                 today={today}
                 reveal={showReveal}
                 currentUser={currentUser}
-                players={players}        // <— NEW: pass roster for “Posting as”
+                players={players}
               />
             </div>
 
@@ -156,9 +156,10 @@ const GroupPage: React.FC = () => {
         {!loading && view === "h2h" && (
           <HeadToHeadStats
             allSubmissions={allSubmissions}
+            todaysSubmissions={todaysSubmissions}  // <-- include today after reveal
             players={players}
             today={today}
-            reveal={showReveal}
+            reveal={showReveal}                     // <-- reveal gate
           />
         )}
 
