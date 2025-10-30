@@ -1,5 +1,5 @@
 // components/EmojiReactions.tsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { useParams } from "react-router-dom";
 import { db } from "../firebase";
 import {
@@ -10,195 +10,204 @@ import {
   query,
   serverTimestamp,
   where,
+  Query,
+  Unsubscribe,
 } from "firebase/firestore";
 
 type ReactionDoc = {
   id?: string;
   groupId: string;
-  date: string;        // YYYY-MM-DD
-  emoji: string;
-  postedBy?: string;   // optional "Joe"/"Pete"
-  createdAt?: any;
+  date: string;          // YYYY-MM-DD (Chicago-local normalized)
+  emoji: string;         // e.g., "🎉"
+  postedBy?: string;     // optional "Joe"/"Pete"
+  createdAt?: any;       // Firestore Timestamp
 };
 
 type Props = {
-  today: string;               // YYYY-MM-DD
-  reveal: boolean;             // gate posting/visibility until reveal
-  currentUser?: string;        // optional, tag who posted
-  showIndexWarning?: boolean;  // show the "fallback used" banner (default true)
+  today: string;          // YYYY-MM-DD (passed from GroupPage/useWordleData)
+  reveal: boolean;        // gate posting until reveal rules met
+  currentUser?: string;   // optional, used to tag postedBy
+  /** If you ever want the fallback banner back, set this to true. Defaults to false. */
+  showIndexWarning?: boolean;
 };
 
-const QUICK_EMOJIS = ["🎉", "🔥", "🤯", "😭", "💪", "🤖", "👏", "🍀", "😅", "🧠"];
+const EMOJI_PALETTE = ["🎉", "🔥", "🤣", "👏", "🤯", "😭", "😤", "💀", "🍀", "🧠"];
 
 const EmojiReactions: React.FC<Props> = ({
   today,
   reveal,
   currentUser,
-  showIndexWarning = true,
+  showIndexWarning = false, // default off per your request
 }) => {
   const { groupId } = useParams();
   const [loading, setLoading] = useState(true);
+  const [reactions, setReactions] = useState<ReactionDoc[]>([]);
   const [usedFallback, setUsedFallback] = useState(false);
   const [posting, setPosting] = useState<string | null>(null);
-  const [rows, setRows] = useState<ReactionDoc[]>([]);
 
-  // Live feed (tries indexed query first, falls back if missing index)
+  // Subscribe to today's reactions (indexed query first, then fallback if needed)
   useEffect(() => {
     if (!db || !groupId) return;
     setLoading(true);
     setUsedFallback(false);
 
-    const handleSnap = (snap: any) => {
-      const items: ReactionDoc[] = snap.docs.map((d: any) => {
-        const data = d.data() as any;
-        return { id: d.id, ...(data as ReactionDoc) };
-      });
-      setRows(items);
-      setLoading(false);
-    };
+    let unsub: Unsubscribe | undefined;
 
-    const handleErr = (err: any) => {
-      console.error("[EmojiReactions] onSnapshot error:", err);
-      setLoading(false);
-    };
-
-    // Try: requires composite index on (groupId ASC, date ASC, createdAt ASC)
-    try {
-      const qRef = query(
+    const makePrimaryQuery = (): Query =>
+      query(
         collection(db, "reactions"),
         where("groupId", "==", groupId),
         where("date", "==", today),
-        orderBy("createdAt", "asc")
+        orderBy("createdAt", "asc") // <-- matches your composite index
       );
-      const unsub = onSnapshot(qRef, handleSnap, (err) => {
-        // If the backend throws here (e.g., missing index), switch to fallback
-        if (err?.code === "failed-precondition") {
-          setUsedFallback(true);
-          const fbRef = query(
-            collection(db, "reactions"),
-            where("groupId", "==", groupId),
-            where("date", "==", today)
-          );
-          const unsubFb = onSnapshot(fbRef, handleSnap, handleErr);
-          return () => unsubFb();
+
+    const makeFallbackQuery = (): Query =>
+      query(
+        collection(db, "reactions"),
+        where("groupId", "==", groupId),
+        where("date", "==", today)
+      );
+
+    const attach = (q: Query, isFallback = false) => {
+      return onSnapshot(
+        q,
+        (snap) => {
+          const rows: ReactionDoc[] = snap.docs.map((d) => ({
+            id: d.id,
+            ...(d.data() as ReactionDoc),
+          }));
+          setReactions(rows);
+          setLoading(false);
+        },
+        (err) => {
+          // If the index is missing or not ready, drop to fallback once.
+          const msg = String(err?.message || "");
+          if (!isFallback && (err?.code === "failed-precondition" || /index/i.test(msg))) {
+            setUsedFallback(true);
+            unsub?.();
+            unsub = attach(makeFallbackQuery(), true);
+            return;
+          }
+          console.error("[EmojiReactions] onSnapshot error:", err);
+          setLoading(false);
         }
-        handleErr(err);
-      });
-      return () => unsub();
-    } catch (e: any) {
-      // Synchronous failure path (rare), also fall back
-      if (e?.code === "failed-precondition") {
-        setUsedFallback(true);
-        const fbRef = query(
-          collection(db, "reactions"),
-          where("groupId", "==", groupId),
-          where("date", "==", today)
-        );
-        const unsubFb = onSnapshot(fbRef, handleSnap, handleErr);
-        return () => unsubFb();
-      }
-      console.error("[EmojiReactions] query error:", e);
-      setLoading(false);
-    }
-  }, [groupId, today]);
+      );
+    };
 
-  const canPost = reveal && !!groupId && !!db;
+    unsub = attach(makePrimaryQuery(), false);
+    return () => {
+      try { unsub && unsub(); } catch {}
+    };
+  }, [db, groupId, today]);
 
-  const postEmoji = async (emoji: string) => {
-    if (!canPost) return;
-    try {
-      setPosting(emoji);
-      await addDoc(collection(db, "reactions"), {
-        groupId,
-        date: today,
-        emoji,
-        postedBy: currentUser || "",
-        createdAt: serverTimestamp(),
-      } as ReactionDoc);
-    } catch (err) {
-      console.error("[EmojiReactions] postEmoji error:", err);
-    } finally {
-      setPosting(null);
-    }
-  };
-
-  // Group duplicates for a compact visual (e.g., "🎉 x3")
-  const grouped = useMemo(() => {
+  // Aggregate counts by emoji
+  const tally = useMemo(() => {
     const map = new Map<string, number>();
-    for (const r of rows) {
-      const k = r.emoji || "";
-      map.set(k, (map.get(k) || 0) + 1);
+    for (const r of reactions) {
+      const key = r.emoji || "";
+      if (!key) continue;
+      map.set(key, (map.get(key) || 0) + 1);
     }
-    return Array.from(map.entries()).sort((a, b) => b[1] - a[1]);
-  }, [rows]);
+    // Keep palette order (only show emojis that have been used)
+    return EMOJI_PALETTE.filter((e) => map.has(e)).map((e) => ({
+      emoji: e,
+      count: map.get(e) || 0,
+    }));
+  }, [reactions]);
+
+  // Post a reaction
+  const post = useCallback(
+    async (emoji: string) => {
+      if (!reveal || !db || !groupId || !emoji) return;
+      try {
+        setPosting(emoji);
+        await addDoc(collection(db, "reactions"), {
+          groupId,
+          date: today,
+          emoji,
+          postedBy: currentUser || "",
+          createdAt: serverTimestamp(),
+        } as ReactionDoc);
+      } catch (err) {
+        console.error("[EmojiReactions] post error:", err);
+      } finally {
+        setPosting(null);
+      }
+    },
+    [db, groupId, today, currentUser, reveal]
+  );
 
   return (
     <section className="rounded-lg border border-gray-700 p-4">
-      <h3 className="text-lg font-semibold mb-2">Reactions</h3>
+      <h3 className="text-lg font-semibold mb-2">Emoji Reactions</h3>
 
       {!reveal ? (
-        <p className="text-sm text-gray-500">
-          Reactions are hidden until both players submit or it’s 7:00 PM Central.
+        <p className="text-sm text-gray-400">
+          Reactions unlock after everyone submits or at 7:00 PM Central.
         </p>
       ) : (
         <>
-          {/* Quick-post row */}
-          <div className="flex flex-wrap gap-2">
-            {QUICK_EMOJIS.map((em) => (
+          {/* Palette */}
+          <div className="flex flex-wrap gap-2 mb-3">
+            {EMOJI_PALETTE.map((e) => (
               <button
-                key={em}
+                key={e}
                 type="button"
-                disabled={!canPost || posting === em}
-                onClick={() => postEmoji(em)}
-                className="px-2 py-1 rounded border border-gray-700 bg-gray-800 hover:border-wordle-green disabled:opacity-60"
-                title={posting === em ? "Posting…" : `React with ${em}`}
+                onClick={() => post(e)}
+                disabled={posting === e}
+                className="px-3 py-2 rounded-lg border border-gray-700 bg-gray-800 hover:border-wordle-green transition disabled:opacity-60"
+                title={`React with ${e}`}
               >
-                <span className="text-lg">{em}</span>
-                {posting === em ? <span className="ml-2 text-xs">Posting…</span> : null}
+                <span className="text-xl">{e}</span>
               </button>
             ))}
           </div>
 
-          {/* Fallback banner (optional) */}
-          {showIndexWarning && usedFallback && (
+          {/* Tally */}
+          <div className="mb-2">
+            {loading ? (
+              <p className="text-sm text-gray-500">Loading reactions…</p>
+            ) : tally.length === 0 ? (
+              <p className="text-sm text-gray-500">No reactions yet today.</p>
+            ) : (
+              <ul className="flex flex-wrap gap-3">
+                {tally.map((t) => (
+                  <li
+                    key={t.emoji}
+                    className="text-sm bg-gray-800/60 border border-gray-700 rounded px-2 py-1"
+                  >
+                    <span className="mr-1">{t.emoji}</span>
+                    <span className="text-gray-300">{t.count}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          {/* Recent feed (optional visual) */}
+          {reactions.length > 0 && (
+            <div className="mt-2">
+              <p className="text-xs text-gray-500 mb-1">Recent:</p>
+              <div className="flex flex-wrap gap-1">
+                {reactions.slice(-24).map((r) => (
+                  <span
+                    key={r.id}
+                    className="px-2 py-1 text-base rounded bg-gray-800/40 border border-gray-700"
+                    title={r.postedBy ? `by ${r.postedBy}` : undefined}
+                  >
+                    {r.emoji}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Fallback banner is intentionally suppressed by default */}
+          {showIndexWarning && usedFallback ? (
             <p className="text-xs text-gray-500 mt-2">
               Live feed fallback in use (no Firestore index). Reactions will still appear.
             </p>
-          )}
-
-          {/* Live tally + stream */}
-          <div className="mt-3">
-            {loading ? (
-              <p className="text-sm text-gray-400">Loading reactions…</p>
-            ) : rows.length === 0 ? (
-              <p className="text-sm text-gray-500">No reactions yet today.</p>
-            ) : (
-              <>
-                {/* Compact tally */}
-                <div className="flex flex-wrap gap-2 mb-2">
-                  {grouped.map(([em, count]) => (
-                    <span
-                      key={em}
-                      className="inline-flex items-center gap-1 px-2 py-1 rounded bg-gray-800 border border-gray-700"
-                    >
-                      <span className="text-lg">{em}</span>
-                      <span className="text-xs text-gray-300">×{count}</span>
-                    </span>
-                  ))}
-                </div>
-
-                {/* Recent feed (lightweight) */}
-                <ul className="space-y-1">
-                  {rows.map((r) => (
-                    <li key={r.id} className="text-sm text-gray-300">
-                      <span className="text-lg mr-1">{r.emoji}</span>
-                      {r.postedBy ? <span className="text-gray-400">by {r.postedBy}</span> : null}
-                    </li>
-                  ))}
-                </ul>
-              </>
-            )}
-          </div>
+          ) : null}
         </>
       )}
     </section>
