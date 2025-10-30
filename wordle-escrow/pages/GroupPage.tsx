@@ -27,7 +27,19 @@ const GroupPage: React.FC = () => {
   const location = useLocation();
   if (!groupId) return <Navigate to="/group/main" replace />;
 
+  // 🔹 Title + subtitle
   const groupTitle = "Wordle Escrow";
+  const subtitle = "Safeguarding Wordle Bragging Rights Since 2025";
+
+  // Keep browser tab consistent
+  useEffect(() => {
+    document.title = groupTitle;
+    return () => {
+      document.title = groupTitle;
+    };
+  }, []);
+
+  // Joe & Pete only (as discussed)
   const players: ("Joe" | "Pete")[] = ["Joe", "Pete"];
 
   const fakeGroup = useMemo(() => ({ id: groupId }), [groupId]);
@@ -51,19 +63,17 @@ const GroupPage: React.FC = () => {
   })();
   const showReveal = forceReveal || revealByAll || revealByTime;
 
-  // ---- NEW: Auto-generate once when reveal turns true and no summary exists
-  // Use a ref so we don't trigger multiple times in one session
+  // ---- Auto-generate the daily AI summary once when reveal is true
   const autoRanRef = useRef(false);
   useEffect(() => {
     if (!showReveal) return;
     if (autoRanRef.current) return;
     autoRanRef.current = true;
 
-    // Fire and forget — function internally skips if summary already exists
-    generateSummaryIfNeeded(groupId, today, todaysSubmissions)
-      .catch(() => {
-        // swallow; display component will still show "No summary yet"
-      });
+    // Fire-and-forget, function internally skips if summary already exists
+    generateSummaryIfNeeded(groupId, today, todaysSubmissions).catch(() => {
+      // Swallow errors here; status/errorMessage are written to Firestore for debugging
+    });
   }, [showReveal, groupId, today, todaysSubmissions]);
 
   // Tabs
@@ -74,9 +84,17 @@ const GroupPage: React.FC = () => {
     <div className="min-h-screen bg-wordle-dark text-wordle-light font-sans p-2 sm:p-6 lg:p-8">
       <div className="max-w-7xl mx-auto">
         <header className="text-center mb-8">
-          <h1 className="text-4xl sm:text-5xl font-bold tracking-wider uppercase">{groupTitle}</h1>
-          <div className="flex justify-center items-center gap-4 mt-2">
-            <Link to="/" className="text-gray-400 hover:text-wordle-green transition-colors text-sm">
+          <h1 className="text-4xl sm:text-5xl font-bold tracking-wider uppercase">
+            {groupTitle}
+          </h1>
+          <p className="mt-2 text-sm sm:text-base text-gray-400">
+            {subtitle}
+          </p>
+          <div className="flex justify-center items-center gap-4 mt-3">
+            <Link
+              to="/"
+              className="text-gray-400 hover:text-wordle-green transition-colors text-sm"
+            >
               Home
             </Link>
           </div>
