@@ -9,6 +9,7 @@ import GameHistory from "../components/GameHistory";
 import HeadToHeadStats from "../components/HeadToHeadStats";
 import AiSummary from "../components/AiSummary";
 import GiphyDisplay from "../components/GiphyDisplay";
+import EmojiReactions from "../components/EmojiReactions";
 
 import { useWordleData } from "../hooks/useWordleData";
 import { generateSummaryIfNeeded } from "../utils/autoSummary";
@@ -50,7 +51,7 @@ const GroupPage: React.FC = () => {
     };
   }, []);
 
-  // Fixed roster (Joe & Pete)
+  // Fixed roster (Joe & Pete for your simplified app)
   const players: ("Joe" | "Pete")[] = ["Joe", "Pete"];
 
   // Data hook
@@ -125,7 +126,7 @@ const GroupPage: React.FC = () => {
                 revealCutoffLabel="7:00 PM America/Chicago"
               />
 
-              {/* Always render; component hides button when a summary is present */}
+              {/* Always render; component hides its button when a summary already exists */}
               <AiSummary today={today} groupId={groupId!} />
 
               <GiphyDisplay
@@ -133,6 +134,12 @@ const GroupPage: React.FC = () => {
                 reveal={showReveal}
                 currentUser={currentUser}
                 players={players}
+              />
+
+              <EmojiReactions
+                today={today}
+                reveal={showReveal}       // set to true to allow reactions pre-reveal
+                currentUser={currentUser}
               />
             </div>
 
@@ -156,10 +163,10 @@ const GroupPage: React.FC = () => {
         {!loading && view === "h2h" && (
           <HeadToHeadStats
             allSubmissions={allSubmissions}
-            todaysSubmissions={todaysSubmissions}  // <-- include today after reveal
+            todaysSubmissions={todaysSubmissions} // include today once revealed
             players={players}
             today={today}
-            reveal={showReveal}                     // <-- reveal gate
+            reveal={showReveal}
           />
         )}
 
