@@ -75,7 +75,7 @@ async function callGeminiOnce(model: string, prompt: string) {
     body: JSON.stringify({
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       generationConfig: {
-        temperature: 0.8,       // slightly lower to reduce safety triggers
+        temperature: 1.0,       // slightly lower to reduce safety triggers
         maxOutputTokens: 220,   // modest length
       },
       // You can add safetySettings here if needed.
