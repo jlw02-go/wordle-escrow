@@ -1,27 +1,20 @@
 // components/AiSummary.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { db } from "../firebase";
-import {
-  collection,
-  doc,
-  onSnapshot,
-  setDoc,
-  serverTimestamp,
-  getDoc,
-} from "firebase/firestore";
+import { collection, doc, onSnapshot, setDoc, serverTimestamp, getDoc } from "firebase/firestore";
 import { useParams } from "react-router-dom";
 
 type Props = {
   todaysSubmissions: Record<string, any>;
-  today: string;          // canonical YYYY-MM-DD from useWordleData
-  groupId: string;        // passed from GroupPage
-  reveal: boolean;        // passed from GroupPage (all submitted OR 7pm CT)
+  today: string;     // YYYY-MM-DD
+  groupId: string;   // passed from GroupPage
+  reveal: boolean;   // after both or 7pm CT
 };
 
 const GEMINI_KEY = import.meta.env.VITE_GEMINI_API_KEY || "";
 const MODEL = "gemini-2.0-flash";
 
-function buildPrompt(today: string, subs: Record<string, any>) {
+function promptFor(today: string, subs: Record<string, any>) {
   const lines = Object.values(subs || [])
     .map((s: any) => {
       const p = s?.player ?? "";
@@ -32,16 +25,16 @@ function buildPrompt(today: string, subs: Record<string, any>) {
     })
     .join("\n\n");
 
-  return `Write a single witty, friendly, 2–4 sentence recap of today's head-to-head Wordle.
-Keep it light, sports-announcer tone, no insults, G-rated, and mention players by name.
-If scores tie, celebrate the tie. If one player wins, congratulate them and tease the other gently.
-Do not invent facts outside the scores.
+  return `Write a punchy, witty recap of today's head-to-head Wordle (2–4 sentences). 
+Tone: playful sports booth, clever metaphors, zero profanity, G-rated, no meanness. 
+Mention players by name, keep it factual—use ONLY the scores and grids provided.
+If tied, celebrate the stalemate. If someone wins, congratulate them with a light, fun jab at the other.
+Do NOT invent details that aren't in the scores or grids.
 
 Date: ${today}
 
 Submissions:
-${lines || "No data"}
-`;
+${lines || "No data"}`;
 }
 
 async function callGemini(prompt: string) {
@@ -51,12 +44,13 @@ async function callGemini(prompt: string) {
   )}`;
 
   const body = {
-    contents: [
-      {
-        role: "user",
-        parts: [{ text: prompt }],
-      },
-    ],
+    contents: [{ role: "user", parts: [{ text: prompt }] }],
+    generationConfig: {
+      temperature: 0.9,
+      topP: 0.95,
+      topK: 40,
+      maxOutputTokens: 256,
+    },
   };
 
   const res = await fetch(url, {
@@ -64,7 +58,6 @@ async function callGemini(prompt: string) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`Gemini HTTP ${res.status}: ${text}`);
@@ -81,12 +74,9 @@ const AiSummary: React.FC<Props> = ({ todaysSubmissions, today, groupId, reveal 
   const [loading, setLoading] = useState(true);
   const [text, setText] = useState<string>("");
   const [err, setErr] = useState<string>("");
-  const hasKickedOff = useRef(false); // prevent duplicate runs
-
+  const kicked = useRef(false);
   const docId = `${groupId}_${today}`;
-  const subCount = Object.keys(todaysSubmissions || {}).length;
 
-  // Subscribe to the single summary doc
   useEffect(() => {
     if (!db || !groupId || !today) return;
     setLoading(true);
@@ -104,35 +94,24 @@ const AiSummary: React.FC<Props> = ({ todaysSubmissions, today, groupId, reveal 
       }
     );
     return () => unsub();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [groupId, today, docId]);
 
-  // Auto-generate once after reveal if no text yet
   useEffect(() => {
     const run = async () => {
-      if (!reveal) return;            // only after reveal
-      if (hasKickedOff.current) return;
+      if (!reveal) return;
+      if (kicked.current) return;
       if (!db || !groupId || !today) return;
 
       try {
         const ref = doc(collection(db, "summaries"), docId);
         const snap = await getDoc(ref);
-        const existing = snap.exists() ? (snap.data() as any) : null;
-        if (existing?.text) {
-          // already generated
-          return;
-        }
+        if (snap.exists() && (snap.data() as any)?.text) return;
 
-        hasKickedOff.current = true;
+        kicked.current = true;
 
-        // build prompt from submissions
-        const prompt = buildPrompt(today, todaysSubmissions);
-        if (!prompt.trim()) return;
-
+        const prompt = promptFor(today, todaysSubmissions);
         const out = await callGemini(prompt);
-        const finalText =
-          out ||
-          `Daily banter for ${today}.`; // last-resort fallback (won't be needed if model works)
+        const finalText = out || `Daily banter for ${today}.`;
 
         await setDoc(
           ref,
@@ -149,7 +128,6 @@ const AiSummary: React.FC<Props> = ({ todaysSubmissions, today, groupId, reveal 
         setErr(e?.message || String(e));
       }
     };
-
     run();
   }, [reveal, groupId, today, docId, todaysSubmissions]);
 
@@ -174,9 +152,7 @@ const AiSummary: React.FC<Props> = ({ todaysSubmissions, today, groupId, reveal 
       ) : !reveal ? null : text ? (
         <p className="mt-3 leading-relaxed">{text}</p>
       ) : err ? (
-        <div className="mt-3 text-sm text-red-400">
-          Summary generation failed: {err}
-        </div>
+        <div className="mt-3 text-sm text-red-400">Summary generation failed: {err}</div>
       ) : (
         <p className="text-sm text-gray-500 mt-2">Generating…</p>
       )}
