@@ -1,18 +1,22 @@
 // components/PlayerStats.tsx
 import React, { useMemo } from "react";
 
-type Row = {
+type BaseRow = {
   games: number;
   total: number;
   avg: number;
   wins: number;
+  // optional fields; show only if present
+  best?: number;
+  worst?: number;
+  streak?: number;
+  longestStreak?: number;
 };
 
 type Props = {
-  stats: Record<string, Row>;
+  stats: Record<string, BaseRow>;
   players: string[];
   reveal: boolean;
-  // For showing today’s grid preview under each player (optional)
   todaysSubmissions?: Record<string, any>;
 };
 
@@ -34,7 +38,7 @@ const PlayerStats: React.FC<Props> = ({ stats, players, reveal, todaysSubmission
       return { player: p, ...r };
     });
 
-    // Sort by wins desc, then avg asc, then name
+    // sort by wins desc, then avg asc, then name
     list.sort((a, b) => {
       if (b.wins !== a.wins) return b.wins - a.wins;
       if (a.avg !== b.avg) return a.avg - b.avg;
@@ -42,6 +46,12 @@ const PlayerStats: React.FC<Props> = ({ stats, players, reveal, todaysSubmission
     });
     return list;
   }, [players, stats]);
+
+  // Determine which optional columns exist for any player
+  const hasBest = rows.some((r) => typeof r.best === "number");
+  const hasWorst = rows.some((r) => typeof r.worst === "number");
+  const hasStreak = rows.some((r) => typeof r.streak === "number");
+  const hasLongest = rows.some((r) => typeof r.longestStreak === "number");
 
   return (
     <section className="rounded-lg border border-gray-700 p-4">
@@ -56,6 +66,10 @@ const PlayerStats: React.FC<Props> = ({ stats, players, reveal, todaysSubmission
               <th className="py-2 pr-4">Total</th>
               <th className="py-2 pr-4">Average</th>
               <th className="py-2 pr-4">Wins</th>
+              {hasBest && <th className="py-2 pr-4">Best</th>}
+              {hasWorst && <th className="py-2 pr-4">Worst</th>}
+              {hasStreak && <th className="py-2 pr-4">Streak</th>}
+              {hasLongest && <th className="py-2 pr-4">Longest</th>}
             </tr>
           </thead>
           <tbody className="text-gray-100">
@@ -66,13 +80,17 @@ const PlayerStats: React.FC<Props> = ({ stats, players, reveal, todaysSubmission
                 <td className="py-2 pr-4">{r.total}</td>
                 <td className="py-2 pr-4">{r.avg}</td>
                 <td className="py-2 pr-4">{r.wins}</td>
+                {hasBest && <td className="py-2 pr-4">{r.best ?? "—"}</td>}
+                {hasWorst && <td className="py-2 pr-4">{r.worst ?? "—"}</td>}
+                {hasStreak && <td className="py-2 pr-4">{r.streak ?? "—"}</td>}
+                {hasLongest && <td className="py-2 pr-4">{r.longestStreak ?? "—"}</td>}
               </tr>
             ))}
           </tbody>
         </table>
       </div>
 
-      {/* Today’s grid preview (after reveal) */}
+      {/* Today’s grids (after reveal) */}
       <div className="mt-4 space-y-3">
         {(players || []).map((p) => {
           const sub = todaysSubmissions?.[p];
