@@ -1,5 +1,5 @@
 // pages/GroupPage.tsx
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useMemo, useState } from "react";
 import { useParams, Navigate, useLocation } from "react-router-dom";
 
 import ScoreInputForm from "../components/ScoreInputForm";
@@ -7,34 +7,14 @@ import TodaysResults from "../components/TodaysResults";
 import PlayerStats from "../components/PlayerStats";
 import GameHistory from "../components/GameHistory";
 import HeadToHeadStats from "../components/HeadToHeadStats";
-import AiSummary from "../components/AiSummary";
+import AiSummary from "../components/AiSummary"; // keep if you're still using manual/assisted summary
 import GiphyDisplay from "../components/GiphyDisplay";
 import EmojiReactions from "../components/EmojiReactions";
 
 import { useWordleData } from "../hooks/useWordleData";
-import { generateSummaryIfNeeded } from "../utils/autoSummary";
+import { getDisplayName } from "../utils/currentUser";
 
-// 7:00 PM Central reveal helper
-function chicagoAtOrAfter(hour24: number, minute: number = 0) {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/Chicago",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).formatToParts(new Date());
-  const hh = parseInt(parts.find((p) => p.type === "hour")?.value || "0", 10);
-  const mm = parseInt(parts.find((p) => p.type === "minute")?.value || "0", 10);
-  return hh > hour24 || (hh === hour24 && mm >= minute);
-}
-
-function getCurrentUserName(): string {
-  try {
-    const v = localStorage.getItem("displayName");
-    return v && v.trim() ? v.trim() : "";
-  } catch {
-    return "";
-  }
-}
+const TZ = "America/Chicago";
 
 const GroupPage: React.FC = () => {
   const { groupId } = useParams<{ groupId: string }>();
@@ -42,20 +22,11 @@ const GroupPage: React.FC = () => {
   if (!groupId) return <Navigate to="/group/main" replace />;
 
   const groupTitle = "Wordle Escrow";
-  const subtitle = "Safeguarding Wordle Bragging Rights Since 2025";
+  const showSubtitle = false;
 
-  useEffect(() => {
-    document.title = groupTitle;
-    return () => {
-      document.title = groupTitle;
-    };
-  }, []);
-
-  // Fixed roster (Joe & Pete for your simplified app)
-  const players: ("Joe" | "Pete")[] = ["Joe", "Pete"];
-
-  // Data hook
+  // minimal “group” shape expected by your hook
   const fakeGroup = useMemo(() => ({ id: groupId }), [groupId]);
+
   const {
     stats,
     todaysSubmissions,
@@ -63,35 +34,45 @@ const GroupPage: React.FC = () => {
     addSubmission,
     loading,
     today,
+    players,
   } = useWordleData({ group: fakeGroup });
 
-  // Reveal: both submitted OR 7:00 PM CT OR ?reveal=1
+  // ---- Reveal logic: after all submit OR at 7:00 PM Central OR ?reveal=1 ----
   const submittedCount = Object.keys(todaysSubmissions || {}).length;
   const forceReveal = new URLSearchParams(location.search).get("reveal") === "1";
-  const revealByAll = submittedCount >= players.length;
-  const revealByTime = chicagoAtOrAfter(19, 0); // 7:00 PM CT
+  const revealByAll = players.length > 0 && submittedCount >= players.length;
+
+  // 7:00 PM in America/Chicago for the current "today" date
+  const revealByTime = (() => {
+    try {
+      // today format expected as YYYY-MM-DD
+      const target = new Date(`${today}T19:00:00-05:00`); // CST/CDT offset note: if DST matters, you can compute via Intl
+      const now = new Date();
+      return now.getTime() >= target.getTime();
+    } catch {
+      return false;
+    }
+  })();
+
   const showReveal = forceReveal || revealByAll || revealByTime;
 
-  // Auto-generate daily summary after reveal (once per page load)
-  const autoRanRef = useRef(false);
-  useEffect(() => {
-    if (!showReveal) return;
-    if (autoRanRef.current) return;
-    autoRanRef.current = true;
-    generateSummaryIfNeeded(groupId!, today, todaysSubmissions).catch(() => {});
-  }, [showReveal, groupId, today, todaysSubmissions]);
-
   const [view, setView] = useState<"today" | "history" | "h2h">("today");
-  const currentUser = useMemo(() => getCurrentUserName(), []);
+
+  // Current user's display name (used for Giphy & Emoji postedBy)
+  const currentUser = getDisplayName() || "";
 
   return (
     <div className="min-h-screen bg-wordle-dark text-wordle-light font-sans p-2 sm:p-6 lg:p-8">
       <div className="max-w-7xl mx-auto">
         <header className="text-center mb-8">
-          <h1 className="text-4xl sm:text-5xl font-bold tracking-wider uppercase">
-            {groupTitle}
-          </h1>
-          <p className="mt-2 text-sm sm:text-base text-gray-400">{subtitle}</p>
+          <h1 className="text-4xl sm:text-5xl font-bold tracking-wider uppercase">{groupTitle}</h1>
+          {showSubtitle && (
+            <div className="mt-2">
+              <span className="text-xs uppercase tracking-wider text-gray-400 bg-gray-800/60 px-2 py-1 rounded">
+                Group: {groupId}
+              </span>
+            </div>
+          )}
         </header>
 
         <div className="mb-8 border-b border-gray-700">
@@ -119,39 +100,43 @@ const GroupPage: React.FC = () => {
                 players={players}
               />
 
-              <TodaysResults
-                players={players}
-                todaysSubmissions={todaysSubmissions}
-                reveal={showReveal}
-                revealCutoffLabel="7:00 PM America/Chicago"
-              />
+              {/* “Awaiting submission” / reveal status + list */}
+              <TodaysResults players={players} />
 
-              {/* Always render; component hides its button when a summary already exists */}
-              <AiSummary today={today} groupId={groupId!} />
+              {/* Post-reveal modules */}
+              {showReveal && (
+                <>
+                  {/* If you’re using the assisted/manual summary component, leave this in */}
+                  <AiSummary
+                    todaysSubmissions={todaysSubmissions}
+                    today={today}
+                    groupId={groupId}
+                    existingSummary={allSubmissions[today]?.aiSummary}
+                  />
 
-              <GiphyDisplay
-                today={today}
-                reveal={showReveal}
-                currentUser={currentUser}
-                players={players}
-              />
+                  {/* Giphy feed + search, scoped to this group/day */}
+                  <GiphyDisplay today={today} reveal={showReveal} currentUser={currentUser} />
 
-              <EmojiReactions
-                today={today}
-                reveal={showReveal}       // set to true to allow reactions pre-reveal
-                currentUser={currentUser}
-              />
+                  {/* NEW: Emoji reactions, gated by reveal */}
+                  <EmojiReactions
+                    today={today}
+                    reveal={showReveal}
+                    currentUser={currentUser}
+                    // showIndexWarning={false} // default is false; keep hidden
+                  />
+                </>
+              )}
             </div>
 
             <div className="lg:col-span-1">
-              <PlayerStats
-                stats={stats}
-                players={players}
-                reveal={showReveal}
-                todaysSubmissions={todaysSubmissions}
-                allSubmissions={allSubmissions}
-                today={today}
-              />
+              {/* Stats are computed server-side by group/day and we gate *render* by reveal */}
+              {showReveal ? (
+                <PlayerStats stats={stats} players={players} />
+              ) : (
+                <div className="rounded-lg border border-gray-700 p-4 text-sm text-gray-400">
+                  Player statistics unlock after everyone submits or at 7:00 PM Central.
+                </div>
+              )}
             </div>
           </main>
         )}
@@ -161,13 +146,7 @@ const GroupPage: React.FC = () => {
         )}
 
         {!loading && view === "h2h" && (
-          <HeadToHeadStats
-            allSubmissions={allSubmissions}
-            todaysSubmissions={todaysSubmissions} // include today once revealed
-            players={players}
-            today={today}
-            reveal={showReveal}
-          />
+          <HeadToHeadStats allSubmissions={allSubmissions} players={players} />
         )}
 
         <footer className="text-center mt-12 text-gray-500 text-sm">
