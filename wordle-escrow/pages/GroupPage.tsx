@@ -50,7 +50,7 @@ const GroupPage: React.FC = () => {
     };
   }, []);
 
-  // Fixed roster: Joe & Pete
+  // Fixed roster for now
   const players: ("Joe" | "Pete")[] = ["Joe", "Pete"];
 
   // Data
@@ -68,16 +68,16 @@ const GroupPage: React.FC = () => {
   const submittedCount = Object.keys(todaysSubmissions || {}).length;
   const forceReveal = new URLSearchParams(location.search).get("reveal") === "1";
   const revealByAll = submittedCount >= players.length;
-  const revealByTime = chicagoAtOrAfter(19, 0); // 7:00 PM
+  const revealByTime = chicagoAtOrAfter(19, 0); // 7:00 PM CT
   const showReveal = forceReveal || revealByAll || revealByTime;
 
-  // Auto-summary after reveal
+  // Auto-summary after reveal (once per page load)
   const autoRanRef = useRef(false);
   useEffect(() => {
     if (!showReveal) return;
     if (autoRanRef.current) return;
     autoRanRef.current = true;
-    generateSummaryIfNeeded(groupId, today, todaysSubmissions).catch(() => {});
+    generateSummaryIfNeeded(groupId!, today, todaysSubmissions).catch(() => {});
   }, [showReveal, groupId, today, todaysSubmissions]);
 
   const [view, setView] = useState<"today" | "history" | "h2h">("today");
@@ -125,18 +125,19 @@ const GroupPage: React.FC = () => {
                 revealCutoffLabel="7:00 PM America/Chicago"
               />
 
-              <AiSummary today={today} groupId={groupId} />
+              {/* Always render; it self-hides button once a summary exists */}
+              <AiSummary today={today} groupId={groupId!} />
 
               <GiphyDisplay
                 today={today}
                 reveal={showReveal}
                 currentUser={currentUser}
+                players={players}        // <— NEW: pass roster for “Posting as”
               />
             </div>
 
             <div className="lg:col-span-1">
               <PlayerStats
-                // NOTE: stats might include today — we recalc display below to hide it until reveal
                 stats={stats}
                 players={players}
                 reveal={showReveal}
@@ -153,7 +154,12 @@ const GroupPage: React.FC = () => {
         )}
 
         {!loading && view === "h2h" && (
-          <HeadToHeadStats allSubmissions={allSubmissions} players={players} />
+          <HeadToHeadStats
+            allSubmissions={allSubmissions}
+            players={players}
+            today={today}
+            reveal={showReveal}
+          />
         )}
 
         <footer className="text-center mt-12 text-gray-500 text-sm">
