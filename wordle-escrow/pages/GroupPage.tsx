@@ -1,5 +1,5 @@
 // pages/GroupPage.tsx
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, Link, Navigate, useLocation } from "react-router-dom";
 
 import ScoreInputForm from "../components/ScoreInputForm";
@@ -11,8 +11,8 @@ import AiSummary from "../components/AiSummary";
 import GiphyDisplay from "../components/GiphyDisplay";
 
 import { useWordleData } from "../hooks/useWordleData";
+import { generateSummaryIfNeeded } from "../utils/autoSummary";
 
-/** Read a friendly display name if your join flow set it */
 function getCurrentUserName(): string {
   try {
     const v = localStorage.getItem("displayName");
@@ -28,14 +28,9 @@ const GroupPage: React.FC = () => {
   if (!groupId) return <Navigate to="/group/main" replace />;
 
   const groupTitle = "Wordle Escrow";
-  const showSubtitle = false;
-
-  // Force roster to exactly Joe & Pete for this simplified build.
   const players: ("Joe" | "Pete")[] = ["Joe", "Pete"];
 
-  // Minimal group obj for the data hook (only uses id)
   const fakeGroup = useMemo(() => ({ id: groupId }), [groupId]);
-
   const {
     stats,
     todaysSubmissions,
@@ -45,21 +40,34 @@ const GroupPage: React.FC = () => {
     today,
   } = useWordleData({ group: fakeGroup });
 
-  // Reveal logic: force via URL (?reveal=1), or when both submitted, or at 1:00 PM CT.
+  // Reveal: force via ?reveal=1, or both submitted, or time >= 1:00 PM CT
   const submittedCount = Object.keys(todaysSubmissions || {}).length;
   const forceReveal = new URLSearchParams(location.search).get("reveal") === "1";
   const revealByAll = submittedCount >= players.length;
   const revealByTime = (() => {
     const now = new Date();
-    const target = new Date(`${today}T13:00:00-05:00`); // 1pm Central (fixed offset)
+    const target = new Date(`${today}T13:00:00-05:00`); // 1pm Central
     return now.getTime() >= target.getTime();
   })();
   const showReveal = forceReveal || revealByAll || revealByTime;
 
+  // ---- NEW: Auto-generate once when reveal turns true and no summary exists
+  // Use a ref so we don't trigger multiple times in one session
+  const autoRanRef = useRef(false);
+  useEffect(() => {
+    if (!showReveal) return;
+    if (autoRanRef.current) return;
+    autoRanRef.current = true;
+
+    // Fire and forget — function internally skips if summary already exists
+    generateSummaryIfNeeded(groupId, today, todaysSubmissions)
+      .catch(() => {
+        // swallow; display component will still show "No summary yet"
+      });
+  }, [showReveal, groupId, today, todaysSubmissions]);
+
   // Tabs
   const [view, setView] = useState<"today" | "history" | "h2h">("today");
-
-  // Optional: pass who posted the GIF
   const currentUser = useMemo(() => getCurrentUserName(), []);
 
   return (
@@ -67,13 +75,6 @@ const GroupPage: React.FC = () => {
       <div className="max-w-7xl mx-auto">
         <header className="text-center mb-8">
           <h1 className="text-4xl sm:text-5xl font-bold tracking-wider uppercase">{groupTitle}</h1>
-          {showSubtitle && (
-            <div className="mt-2">
-              <span className="text-xs uppercase tracking-wider text-gray-400 bg-gray-800/60 px-2 py-1 rounded">
-                Group: {groupId}
-              </span>
-            </div>
-          )}
           <div className="flex justify-center items-center gap-4 mt-2">
             <Link to="/" className="text-gray-400 hover:text-wordle-green transition-colors text-sm">
               Home
@@ -113,23 +114,11 @@ const GroupPage: React.FC = () => {
                 reveal={showReveal}
               />
 
-              {/* Reveal-gated extras */}
-              {showReveal && (
-                <>
-                  <AiSummary
-                    todaysSubmissions={todaysSubmissions}
-                    today={today}
-                    groupId={groupId}
-                    existingSummary={allSubmissions[today]?.aiSummary}
-                  />
-                  {/* Updated GiphyDisplay — supports multiple GIFs per day */}
-                  <GiphyDisplay
-                    today={today}
-                    reveal={showReveal}
-                    currentUser={currentUser}
-                  />
-                </>
-              )}
+              {/* Display-only; content comes from Firestore */}
+              <AiSummary today={today} groupId={groupId} />
+
+              {/* Multi-GIF, reveal-gated */}
+              <GiphyDisplay today={today} reveal={showReveal} currentUser={currentUser} />
             </div>
 
             <div className="lg:col-span-1">
