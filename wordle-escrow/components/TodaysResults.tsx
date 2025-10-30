@@ -43,6 +43,14 @@ const TodaysResults: React.FC<Props> = ({
         </p>
       </div>
 
+      {/* Guidance when not revealed yet */}
+      {!reveal && (
+        <div className="mt-3 rounded-md border border-gray-700 bg-gray-800/50 p-3 text-sm text-gray-300">
+          Results are hidden until <span className="font-semibold">both players</span> submit
+          or it’s <span className="font-semibold">1:00 PM Central</span>.
+        </div>
+      )}
+
       {/* Show actual scores/grids only after reveal */}
       {reveal && (
         <div className="mt-4">
@@ -62,6 +70,9 @@ const TodaysResults: React.FC<Props> = ({
               </div>
             );
           })}
+          {players.every((p) => !todaysSubmissions[p]) && (
+            <p className="text-sm text-gray-500 mt-2">No results yet for today.</p>
+          )}
         </div>
       )}
     </section>
