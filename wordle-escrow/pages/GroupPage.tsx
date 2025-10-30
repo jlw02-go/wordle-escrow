@@ -1,6 +1,6 @@
 // pages/GroupPage.tsx
 import React, { useMemo, useState } from "react";
-import { useParams, Navigate, useLocation } from "react-router-dom";
+import { useParams, Link, Navigate, useLocation } from "react-router-dom";
 
 import ScoreInputForm from "../components/ScoreInputForm";
 import TodaysResults from "../components/TodaysResults";
@@ -12,77 +12,88 @@ import GiphyDisplay from "../components/GiphyDisplay";
 import EmojiReactions from "../components/EmojiReactions";
 
 import { useWordleData } from "../hooks/useWordleData";
-import { getDisplayName } from "../utils/currentUser";
+
+const TZ = "America/Chicago";
+function chicagoTodayISO(): string {
+  const fmt = new Intl.DateTimeFormat("en-CA", {
+    timeZone: TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  return fmt.format(new Date()); // YYYY-MM-DD
+}
+
+function isRevealByTime(dayISO: string): boolean {
+  // Reveal at 7:00 PM Central of that day
+  const targetLocal = new Date(`${dayISO}T19:00:00-05:00`);
+  return Date.now() >= targetLocal.getTime();
+}
 
 const GroupPage: React.FC = () => {
   const { groupId } = useParams<{ groupId: string }>();
   const location = useLocation();
   if (!groupId) return <Navigate to="/group/main" replace />;
 
-  const groupTitle = "Wordle Escrow";
-  const showSubtitle = true;
-
-  const groupLike = useMemo(() => ({ id: groupId }), [groupId]);
+  // Hook: all app data
+  const fakeGroup = useMemo(() => ({ id: groupId }), [groupId]);
   const {
     players,
-    today,                 // YYYY-MM-DD from hook (Chicago day)
-    todaysSubmissions,     // { [player]: submission }
-    allSubmissions,        // { [date]: { [player]: submission, aiSummary? } }
+    today,
+    todaysSubmissions,
+    allSubmissions,
     stats,
     loading,
     addSubmission,
-  } = useWordleData({ group: groupLike });
+  } = useWordleData({ group: fakeGroup });
 
-  // Reveal logic: all submitted OR 7:00 PM CT OR ?reveal=1
+  // Reveal logic
   const submittedCount = Object.keys(todaysSubmissions || {}).length;
-  const revealByAll = players.length > 0 && submittedCount >= players.length;
-
-  const revealByTime = useMemo(() => {
-    try {
-      const target = new Date(`${today}T19:00:00-05:00`); // 7pm Central (simple fixed offset)
-      return Date.now() >= target.getTime();
-    } catch {
-      return false;
-    }
-  }, [today]);
-
   const forceReveal = new URLSearchParams(location.search).get("reveal") === "1";
-  const reveal = forceReveal || revealByAll || revealByTime;
+  const revealByAll = players.length > 0 && submittedCount >= players.length;
+  const revealByTime = isRevealByTime(today || chicagoTodayISO());
+  const showReveal = !!(forceReveal || revealByAll || revealByTime);
 
-  const currentUser = getDisplayName() || "";
+  // Debug bar (optional)
   const [view, setView] = useState<"today" | "history" | "h2h">("today");
-
-  const DebugBar = () => (
-    <div className="mb-3 rounded bg-gray-800/60 p-2 text-xs text-gray-300">
-      <div>
-        Debug: reveal={String(reveal)} (force={String(forceReveal)} • all={String(revealByAll)} • time={String(revealByTime)})
-      </div>
-      <div>today={today} • players={[...players].join(", ") || "—"} • submitted={submittedCount}</div>
-    </div>
-  );
+  const debug = new URLSearchParams(location.search).get("debug") === "1";
 
   return (
     <div className="min-h-screen bg-wordle-dark text-wordle-light font-sans p-2 sm:p-6 lg:p-8">
       <div className="max-w-7xl mx-auto">
-        <header className="text-center mb-6">
-          <h1 className="text-4xl sm:text-5xl font-bold tracking-wider uppercase">{groupTitle}</h1>
-          {showSubtitle && (
-            <div className="mt-2">
-              <span className="text-xs uppercase tracking-wider text-gray-400 bg-gray-800/60 px-2 py-1 rounded">
-                Safeguarding Wordle Bragging Rights Since 2025 • Group: {groupId}
-              </span>
+        <header className="text-center mb-8">
+          <h1 className="text-4xl sm:text-5xl font-bold tracking-wider uppercase">Wordle Escrow</h1>
+          {/* subtitle off by default; toggle if you want to show group id */}
+          {/* <div className="mt-2">
+            <span className="text-xs uppercase tracking-wider text-gray-400 bg-gray-800/60 px-2 py-1 rounded">
+              Group: {groupId}
+            </span>
+          </div> */}
+          <div className="flex justify-center items-center gap-4 mt-2">
+            {/* Removed "Home" as requested */}
+            <Link to={`/group/${groupId}/settings`} className="text-gray-400 hover:text-wordle-green transition-colors text-sm">
+              Settings
+            </Link>
+          </div>
+          {debug && (
+            <div className="mt-3 text-xs text-gray-400">
+              Debug: reveal={String(showReveal)} (force={String(forceReveal)} • all={String(revealByAll)} • time={String(revealByTime)})<br />
+              today={today} • players={(players || []).join(", ")} • submitted={submittedCount}
             </div>
           )}
         </header>
 
-        {/* Debug – remove whenever you’re done testing */}
-        <DebugBar />
-
-        <div className="mb-6 border-b border-gray-700">
+        <div className="mb-8 border-b border-gray-700">
           <nav className="-mb-px flex space-x-2 sm:space-x-6 justify-center" aria-label="Tabs">
-            <TabButton currentView={view} viewName="today" setView={setView}>Today&apos;s Game</TabButton>
-            <TabButton currentView={view} viewName="history" setView={setView}>Game History</TabButton>
-            <TabButton currentView={view} viewName="h2h" setView={setView}>Head-to-Head</TabButton>
+            <TabButton currentView={view} viewName="today" setView={setView}>
+              Today&apos;s Game
+            </TabButton>
+            <TabButton currentView={view} viewName="history" setView={setView}>
+              Game History
+            </TabButton>
+            <TabButton currentView={view} viewName="h2h" setView={setView}>
+              Head-to-Head
+            </TabButton>
           </nav>
         </div>
 
@@ -95,44 +106,43 @@ const GroupPage: React.FC = () => {
                 addSubmission={addSubmission}
                 todaysSubmissions={todaysSubmissions}
                 players={players}
-                today={today}
               />
-              <TodaysResults />
 
-              {reveal && (
+              {/* Awaiting/submitted list + reveal handling */}
+              <TodaysResults players={players} />
+
+              {/* Revealed widgets: AI Summary, GIFs, Reactions */}
+              {showReveal && (
                 <>
                   <AiSummary
-                    groupId={groupId}
-                    today={today}
                     todaysSubmissions={todaysSubmissions}
-                    existingSummary={allSubmissions[today]?.aiSummary}
+                    today={today}
+                    groupId={groupId}
+                    reveal={showReveal}
                   />
-
                   <GiphyDisplay
                     today={today}
-                    reveal={reveal}
-                    currentUser={currentUser}
+                    reveal={showReveal}
+                    // optional: tag who posted, if you track current user name elsewhere
+                    // currentUser={getDisplayName() ?? ""}
                   />
-
                   <EmojiReactions
-                    groupId={groupId}
-                    date={today}
-                    reveal={reveal}
-                    hideIndexWarning={true}
-                    currentUser={currentUser}
+                    today={today}
+                    reveal={showReveal}
+                    // currentUser={getDisplayName() ?? ""}
+                    showIndexWarning={false}
                   />
                 </>
               )}
             </div>
 
             <div className="lg:col-span-1">
-              {!reveal ? (
-                <div className="rounded-lg border border-gray-700 p-3 text-sm text-gray-400">
-                  Player statistics are hidden until all players submit or 7:00 PM America/Chicago.
-                </div>
-              ) : (
-                <PlayerStats stats={stats} players={players} />
-              )}
+              <PlayerStats
+                stats={stats}
+                players={players}
+                reveal={showReveal}
+                todaysSubmissions={todaysSubmissions}
+              />
             </div>
           </main>
         )}
@@ -142,13 +152,7 @@ const GroupPage: React.FC = () => {
         )}
 
         {!loading && view === "h2h" && (
-          reveal ? (
-            <HeadToHeadStats allSubmissions={allSubmissions} players={players} />
-          ) : (
-            <div className="rounded-lg border border-gray-700 p-3 text-sm text-gray-400">
-              Head-to-Head is hidden until all players submit or 7:00 PM America/Chicago.
-            </div>
-          )
+          <HeadToHeadStats allSubmissions={allSubmissions} players={players} />
         )}
 
         <footer className="text-center mt-12 text-gray-500 text-sm">
