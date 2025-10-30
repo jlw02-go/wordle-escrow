@@ -1,6 +1,7 @@
 // pages/GroupPage.tsx
 import React, { useMemo, useState } from "react";
 import { useParams, Link, Navigate, useLocation } from "react-router-dom";
+
 import ScoreInputForm from "../components/ScoreInputForm";
 import TodaysResults from "../components/TodaysResults";
 import PlayerStats from "../components/PlayerStats";
@@ -8,18 +9,8 @@ import GameHistory from "../components/GameHistory";
 import HeadToHeadStats from "../components/HeadToHeadStats";
 import AiSummary from "../components/AiSummary";
 import GiphyDisplay from "../components/GiphyDisplay";
-import { useWordleData } from "../hooks/useWordleData";
 
-const TZ = "America/Chicago";
-function todayISO() {
-  const fmt = new Intl.DateTimeFormat("en-CA", {
-    timeZone: TZ,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  });
-  return fmt.format(new Date());
-}
+import { useWordleData } from "../hooks/useWordleData";
 
 const GroupPage: React.FC = () => {
   const { groupId } = useParams<{ groupId: string }>();
@@ -29,20 +20,33 @@ const GroupPage: React.FC = () => {
   const groupTitle = "Wordle Escrow";
   const showSubtitle = false;
 
-  const fakeGroup = useMemo(() => ({ id: groupId }), [groupId]);
-  const { stats, todaysSubmissions, allSubmissions, addSubmission, loading, today, players } =
-    useWordleData({ group: fakeGroup });
+  // Force roster to exactly Joe & Pete for this simplified build.
+  const players: ("Joe" | "Pete")[] = ["Joe", "Pete"];
 
+  // Minimal group obj for the data hook (only uses id)
+  const fakeGroup = useMemo(() => ({ id: groupId }), [groupId]);
+
+  const {
+    stats,
+    todaysSubmissions,
+    allSubmissions,
+    addSubmission,
+    loading,
+    today,
+  } = useWordleData({ group: fakeGroup });
+
+  // Reveal logic: force via URL (?reveal=1), or when both submitted, or at 1:00 PM CT.
   const submittedCount = Object.keys(todaysSubmissions || {}).length;
   const forceReveal = new URLSearchParams(location.search).get("reveal") === "1";
   const revealByAll = submittedCount >= players.length;
   const revealByTime = (() => {
     const now = new Date();
-    const target = new Date(`${today}T13:00:00-05:00`); // 1pm CT
+    const target = new Date(`${today}T13:00:00-05:00`); // 1pm Central (fixed offset)
     return now.getTime() >= target.getTime();
   })();
   const showReveal = forceReveal || revealByAll || revealByTime;
 
+  // Tabs
   const [view, setView] = useState<"today" | "history" | "h2h">("today");
 
   return (
@@ -64,6 +68,7 @@ const GroupPage: React.FC = () => {
           </div>
         </header>
 
+        {/* Tabs */}
         <div className="mb-8 border-b border-gray-700">
           <nav className="-mb-px flex space-x-2 sm:space-x-6 justify-center" aria-label="Tabs">
             <TabButton currentView={view} viewName="today" setView={setView}>
@@ -88,7 +93,15 @@ const GroupPage: React.FC = () => {
                 todaysSubmissions={todaysSubmissions}
                 players={players}
               />
-              <TodaysResults players={players} />
+
+              {/* Shows Submitted/Awaiting; if your TodaysResults supports reveal+scores, pass reveal + todaysSubmissions */}
+              <TodaysResults
+                players={players}
+                todaysSubmissions={todaysSubmissions}
+                reveal={showReveal}
+              />
+
+              {/* Reveal-gated extras */}
               {showReveal && (
                 <>
                   <AiSummary
@@ -101,6 +114,7 @@ const GroupPage: React.FC = () => {
                 </>
               )}
             </div>
+
             <div className="lg:col-span-1">
               <PlayerStats stats={stats} players={players} />
             </div>
