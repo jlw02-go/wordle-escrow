@@ -9,13 +9,8 @@ import {
 
 const GEMINI_KEY = import.meta.env.VITE_GEMINI_API_KEY || "";
 
-/**
- * Use a model that is available for v1beta:generateContent.
- * If you still get 404, list models with:
- *   GET https://generativelanguage.googleapis.com/v1beta/models?key=YOUR_KEY
- * and pick from the results (e.g., "gemini-2.0-flash", "gemini-2.5-flash").
- */
-const MODEL = "gemini-2.5-flash";
+// Try newest first, then a reliable fallback.
+const MODEL_CANDIDATES = ["gemini-2.5-flash", "gemini-2.0-flash"] as const;
 
 type Submissions = Record<
   string,
@@ -27,7 +22,6 @@ type Submissions = Record<
 >;
 
 function buildPrompt(groupId: string, today: string, todaysSubmissions: Submissions) {
-  // Build a tiny scoreboard from the object you pass in (e.g., { Joe: {score: 3}, Pete: {score: 4} })
   const lines: string[] = [];
   try {
     for (const [name, sub] of Object.entries(todaysSubmissions || {})) {
@@ -39,22 +33,76 @@ function buildPrompt(groupId: string, today: string, todaysSubmissions: Submissi
   }
   const scoreboard = lines.length ? `\nScores today:\n- ${lines.join("\n- ")}` : "";
 
-  // Keep prompt short, playful, and deterministic enough
   return `Write a witty, one-paragraph recap of today's Wordle duel between Joe and Pete for group "${groupId}" on ${today}.
-Keep it playful and friendly with light trash talk, 1–2 jokes max, and end with a short punchline.
-Do not reveal the actual word; only reference the scores subtly.${scoreboard}`;
+Keep it playful, light trash talk is okay, but keep it friendly. Include at most 2 jokes. End with a short punchline.
+Do not reveal the actual word. Reference scores only at a high level.${scoreboard}`;
+}
+
+function extractText(json: any): { text: string; finishReason?: string; blockReason?: string } {
+  // Typical success path
+  const parts = json?.candidates?.[0]?.content?.parts;
+  const finishReason = json?.candidates?.[0]?.finishReason;
+  const blockReason = json?.promptFeedback?.blockReason || json?.candidates?.[0]?.safetyRatings?.[0]?.blocked;
+
+  let text = "";
+  if (Array.isArray(parts)) {
+    // Newer responses: parts may be {text}, sometimes multiple lines
+    const strings = parts
+      .map((p: any) => (typeof p?.text === "string" ? p.text : ""))
+      .filter(Boolean);
+    text = strings.join("\n").trim();
+  }
+
+  // Older / alt shapes: some responses may put the text directly on content or candidates[0].output_text
+  if (!text && typeof json?.candidates?.[0]?.output_text === "string") {
+    text = json.candidates[0].output_text.trim();
+  }
+  if (!text && typeof json?.candidates?.[0]?.content?.text === "string") {
+    text = json.candidates[0].content.text.trim();
+  }
+
+  return { text, finishReason, blockReason };
+}
+
+async function callGeminiOnce(model: string, prompt: string) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+    model
+  )}:generateContent?key=${encodeURIComponent(GEMINI_KEY)}`;
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      generationConfig: {
+        temperature: 0.8,       // slightly lower to reduce safety triggers
+        maxOutputTokens: 220,   // modest length
+      },
+      // You can add safetySettings here if needed.
+    }),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Gemini HTTP ${res.status} (${model}): ${errText.slice(0, 400)}`);
+  }
+
+  const json = await res.json();
+  const { text, finishReason, blockReason } = extractText(json);
+
+  if (!text) {
+    const msg = `Empty text (${model}). finishReason=${String(finishReason)} blockReason=${String(blockReason)}`;
+    throw new Error(msg);
+  }
+
+  return { text, finishReason, blockReason };
 }
 
 /**
- * Idempotent client-side generator:
- * - Skips if summary already has text.
- * - Writes status fields to help debug ("started" | "succeeded" | "failed").
- * - On failure, records errorMessage so you can see exactly why in Firestore.
- *
- * The summary is stored at:
- *   Collection: daySummaries
- *   Doc ID: `${groupId}_${today}`
- *   Fields: { groupId, date, text, status, createdAt, startedAt?, failedAt?, errorMessage? }
+ * Idempotent client-side generator with detailed status:
+ * - Skips if summary already has non-empty text.
+ * - Attempts gemini-2.5-flash, then gemini-2.0-flash if needed.
+ * - Writes status text fields so you can see exactly what happened.
  */
 export async function generateSummaryIfNeeded(
   groupId: string,
@@ -73,16 +121,16 @@ export async function generateSummaryIfNeeded(
   const docId = `${groupId}_${today}`;
   const ref = doc(db, "daySummaries", docId);
 
-  // 1) Check if a summary already exists with text
+  // 1) Check existing
   const snap = await getDoc(ref);
   const existing = snap.exists() ? snap.data() : undefined;
   const existingText = (existing?.text as string) || "";
   if (existingText.trim()) {
-    // Already done — nothing to do
+    // Already generated
     return;
   }
 
-  // 2) Mark "started" (best-effort coordination)
+  // 2) Mark started
   await setDoc(
     ref,
     {
@@ -91,77 +139,51 @@ export async function generateSummaryIfNeeded(
       status: "started",
       startedAt: serverTimestamp(),
       errorMessage: "",
+      modelTried: "",
+      finishReason: "",
+      blockReason: "",
     },
     { merge: true }
   );
 
-  try {
-    // 3) Call Gemini
-    const prompt = buildPrompt(groupId, today, todaysSubmissions);
+  const prompt = buildPrompt(groupId, today, todaysSubmissions);
 
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${encodeURIComponent(
-        GEMINI_KEY
-      )}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [
-            {
-              role: "user",
-              parts: [{ text: prompt }],
-            },
-          ],
-          generationConfig: {
-            temperature: 0.9,
-            maxOutputTokens: 256,
-          },
-        }),
-      }
-    );
+  let lastError: any = null;
 
-    if (!res.ok) {
-      const errText = await res.text();
-      throw new Error(`Gemini HTTP ${res.status}: ${errText.slice(0, 400)}`);
+  for (const model of MODEL_CANDIDATES) {
+    try {
+      const { text, finishReason, blockReason } = await callGeminiOnce(model, prompt);
+      await setDoc(
+        ref,
+        {
+          text,
+          status: "succeeded",
+          createdAt: serverTimestamp(),
+          errorMessage: "",
+          modelTried: model,
+          finishReason: String(finishReason ?? ""),
+          blockReason: String(blockReason ?? ""),
+        },
+        { merge: true }
+      );
+      return; // done
+    } catch (e: any) {
+      lastError = e;
+      // record the failed attempt so you can see which model failed
+      await setDoc(
+        ref,
+        {
+          status: "failed",
+          failedAt: serverTimestamp(),
+          errorMessage: String(e?.message || e || "Unknown error"),
+          modelTried: model,
+        },
+        { merge: true }
+      );
+      // try next model
     }
-
-    const json = await res.json();
-    const candidate =
-      json?.candidates?.[0]?.content?.parts?.[0]?.text ||
-      (Array.isArray(json?.candidates?.[0]?.content?.parts)
-        ? json.candidates[0].content.parts
-            .map((p: any) => p?.text)
-            .filter(Boolean)
-            .join("\n")
-        : "") ||
-      "";
-
-    const finalText = (candidate || "").trim() || `Daily banter for ${today}.`;
-
-    // 4) Save success with text
-    await setDoc(
-      ref,
-      {
-        text: finalText,
-        status: "succeeded",
-        createdAt: serverTimestamp(),
-        errorMessage: "",
-      },
-      { merge: true }
-    );
-  } catch (e: any) {
-    // 5) Record failure reason
-    await setDoc(
-      ref,
-      {
-        status: "failed",
-        errorMessage: String(e?.message || e || "Unknown error"),
-        failedAt: serverTimestamp(),
-      },
-      { merge: true }
-    );
-    // Re-throw is optional; callers can swallow
-    throw e;
   }
+
+  // If we got here, all models failed. Leave doc without text.
+  if (lastError) throw lastError;
 }
