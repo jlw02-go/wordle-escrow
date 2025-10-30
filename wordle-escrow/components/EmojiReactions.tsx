@@ -5,7 +5,6 @@ import { db } from "../firebase";
 import {
   addDoc,
   collection,
-  getDocs,
   onSnapshot,
   orderBy,
   query,
@@ -14,9 +13,9 @@ import {
 } from "firebase/firestore";
 
 type Props = {
-  today: string;             // YYYY-MM-DD
-  reveal: boolean;           // after both submitted OR 7pm CT
-  currentUser?: string;      // optional "postedBy"
+  today: string;              // YYYY-MM-DD
+  reveal: boolean;            // unlocked after both submit or 7:00 PM CT
+  currentUser?: string;       // optional postedBy
   showIndexWarning?: boolean; // default false
 };
 
@@ -40,54 +39,73 @@ const EmojiReactions: React.FC<Props> = ({
   const { groupId } = useParams();
   const [loading, setLoading] = useState(true);
   const [reactions, setReactions] = useState<Reaction[]>([]);
-  const [fallback, setFallback] = useState(false);
+  const [usingFallback, setUsingFallback] = useState(false);
 
   useEffect(() => {
     if (!db || !groupId) return;
     setLoading(true);
-    setFallback(false);
+    setUsingFallback(false);
 
-    const base = collection(db, "reactions");
+    const baseCol = collection(db, "reactions");
 
-    // Prefer indexed query (groupId + date + orderBy createdAt)
-    const tryIndexed = query(
-      base,
+    // Try indexed query first (groupId==, date==, orderBy createdAt asc)
+    const qIndexed = query(
+      baseCol,
       where("groupId", "==", groupId),
       where("date", "==", today),
       orderBy("createdAt", "asc")
     );
 
-    const unsub = onSnapshot(
-      tryIndexed,
+    // Primary listener
+    const unsubPrimary = onSnapshot(
+      qIndexed,
       (snap) => {
         const rows: Reaction[] = [];
-        snap.forEach((d) => {
-          rows.push({ id: d.id, ...(d.data() as Reaction) });
-        });
-        setReactions(Array.isArray(rows) ? rows : []);
+        snap.forEach((d) => rows.push({ id: d.id, ...(d.data() as Reaction) }));
+        setReactions(rows);
         setLoading(false);
       },
-      async (err) => {
-        console.warn("[EmojiReactions] indexed query failed; fallback:", err?.code || err);
-        setFallback(true);
-        // Fallback: no orderBy (no index)
-        const plain = query(base, where("groupId", "==", groupId), where("date", "==", today));
-        const s2 = await getDocs(plain);
-        const rows: Reaction[] = [];
-        s2.forEach((d) => {
-          rows.push({ id: d.id, ...(d.data() as Reaction) });
-        });
-        rows.sort((a, b) => {
-          const ta = a?.createdAt?.seconds || 0;
-          const tb = b?.createdAt?.seconds || 0;
-          return ta - tb;
-        });
-        setReactions(Array.isArray(rows) ? rows : []);
-        setLoading(false);
+      // If index is missing, switch to fallback live listener without orderBy
+      (err) => {
+        if (err?.code === "failed-precondition") {
+          setUsingFallback(true);
+          setLoading(true);
+          const qFallback = query(
+            baseCol,
+            where("groupId", "==", groupId),
+            where("date", "==", today)
+          );
+          const unsubFallback = onSnapshot(
+            qFallback,
+            (snap) => {
+              const rows: Reaction[] = [];
+              snap.forEach((d) => rows.push({ id: d.id, ...(d.data() as Reaction) }));
+              // locally sort by createdAt seconds if present
+              rows.sort((a, b) => (a?.createdAt?.seconds || 0) - (b?.createdAt?.seconds || 0));
+              setReactions(rows);
+              setLoading(false);
+            },
+            (e2) => {
+              console.error("[EmojiReactions] fallback onSnapshot error:", e2);
+              setLoading(false);
+            }
+          );
+          // replace the primary unsub with the fallback unsub
+          return unsubFallback;
+        } else {
+          console.error("[EmojiReactions] onSnapshot error:", err);
+          setLoading(false);
+        }
       }
     );
 
-    return () => unsub();
+    return () => {
+      try {
+        unsubPrimary();
+      } catch {
+        // ignore
+      }
+    };
   }, [groupId, today]);
 
   const post = async (emoji: string) => {
@@ -106,14 +124,13 @@ const EmojiReactions: React.FC<Props> = ({
   };
 
   const banner = useMemo(() => {
-    if (!showIndexWarning) return null;
-    if (!fallback) return null;
+    if (!showIndexWarning || !usingFallback) return null;
     return (
       <div className="mb-2 text-xs text-amber-400">
         Live feed fallback in use (no Firestore index). Reactions will still appear.
       </div>
     );
-  }, [fallback, showIndexWarning]);
+  }, [showIndexWarning, usingFallback]);
 
   if (!reveal) {
     return (
@@ -130,6 +147,7 @@ const EmojiReactions: React.FC<Props> = ({
     <section className="rounded-lg border border-gray-700 p-4">
       <h3 className="text-lg font-semibold mb-2">Reactions</h3>
       {banner}
+
       <div className="flex flex-wrap gap-2">
         {EMOJI_CHOICES.map((e) => (
           <button
