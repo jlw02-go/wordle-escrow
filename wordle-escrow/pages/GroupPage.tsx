@@ -1,6 +1,6 @@
 // pages/GroupPage.tsx
 import React, { useMemo, useState } from "react";
-import { useParams, Link, Navigate, useLocation } from "react-router-dom";
+import { useParams, Navigate, useLocation } from "react-router-dom";
 
 import ScoreInputForm from "../components/ScoreInputForm";
 import TodaysResults from "../components/TodaysResults";
@@ -12,9 +12,11 @@ import GiphyDisplay from "../components/GiphyDisplay";
 import EmojiReactions from "../components/EmojiReactions";
 
 import { useWordleData } from "../hooks/useWordleData";
+import { getDisplayName } from "../utils/currentUser";
 
+// ---- time/reveal helpers ----
 const TZ = "America/Chicago";
-function chicagoTodayISO(): string {
+function todayISO(): string {
   const fmt = new Intl.DateTimeFormat("en-CA", {
     timeZone: TZ,
     year: "numeric",
@@ -23,11 +25,15 @@ function chicagoTodayISO(): string {
   });
   return fmt.format(new Date()); // YYYY-MM-DD
 }
+function isRevealReachedByTime(dayISO: string): boolean {
+  const today = todayISO();
+  if (dayISO !== today) return true; // past days always reveal
 
-function isRevealByTime(dayISO: string): boolean {
-  // Reveal at 7:00 PM Central of that day
-  const targetLocal = new Date(`${dayISO}T19:00:00-05:00`);
-  return Date.now() >= targetLocal.getTime();
+  // 7:00 PM Central
+  const now = new Date();
+  // Note: using fixed offset version for simplicity; data elsewhere already normalized to day.
+  const sevenCt = new Date(`${dayISO}T19:00:00-05:00`);
+  return now.getTime() >= sevenCt.getTime();
 }
 
 const GroupPage: React.FC = () => {
@@ -35,54 +41,45 @@ const GroupPage: React.FC = () => {
   const location = useLocation();
   if (!groupId) return <Navigate to="/group/main" replace />;
 
-  // Hook: all app data
   const fakeGroup = useMemo(() => ({ id: groupId }), [groupId]);
   const {
-    players,
-    today,
+    stats,
     todaysSubmissions,
     allSubmissions,
-    stats,
-    loading,
     addSubmission,
+    loading,
+    today,
+    players,
   } = useWordleData({ group: fakeGroup });
 
-  // Reveal logic
   const submittedCount = Object.keys(todaysSubmissions || {}).length;
   const forceReveal = new URLSearchParams(location.search).get("reveal") === "1";
   const revealByAll = players.length > 0 && submittedCount >= players.length;
-  const revealByTime = isRevealByTime(today || chicagoTodayISO());
-  const showReveal = !!(forceReveal || revealByAll || revealByTime);
+  const revealByTime = isRevealReachedByTime(today);
+  const showReveal = forceReveal || revealByAll || revealByTime;
 
-  // Debug bar (optional)
+  // current user (for tagging in GIFs / emoji)
+  const currentUser = getDisplayName() || "";
+
   const [view, setView] = useState<"today" | "history" | "h2h">("today");
-  const debug = new URLSearchParams(location.search).get("debug") === "1";
+
+  const groupTitle = "Wordle Escrow";
+  const subtitle = "Safeguarding Wordle Bragging Rights Since 2025";
 
   return (
     <div className="min-h-screen bg-wordle-dark text-wordle-light font-sans p-2 sm:p-6 lg:p-8">
       <div className="max-w-7xl mx-auto">
+        {/* Header */}
         <header className="text-center mb-8">
-          <h1 className="text-4xl sm:text-5xl font-bold tracking-wider uppercase">Wordle Escrow</h1>
-          {/* subtitle off by default; toggle if you want to show group id */}
-          {/* <div className="mt-2">
-            <span className="text-xs uppercase tracking-wider text-gray-400 bg-gray-800/60 px-2 py-1 rounded">
-              Group: {groupId}
-            </span>
-          </div> */}
-          <div className="flex justify-center items-center gap-4 mt-2">
-            {/* Removed "Home" as requested */}
-            <Link to={`/group/${groupId}/settings`} className="text-gray-400 hover:text-wordle-green transition-colors text-sm">
-              Settings
-            </Link>
-          </div>
-          {debug && (
-            <div className="mt-3 text-xs text-gray-400">
-              Debug: reveal={String(showReveal)} (force={String(forceReveal)} • all={String(revealByAll)} • time={String(revealByTime)})<br />
-              today={today} • players={(players || []).join(", ")} • submitted={submittedCount}
-            </div>
-          )}
+          <h1 className="text-4xl sm:text-5xl font-bold tracking-wider uppercase">
+            {groupTitle}
+          </h1>
+          <p className="mt-2 text-sm sm:text-base text-gray-400">
+            {subtitle}
+          </p>
         </header>
 
+        {/* Tabs */}
         <div className="mb-8 border-b border-gray-700">
           <nav className="-mb-px flex space-x-2 sm:space-x-6 justify-center" aria-label="Tabs">
             <TabButton currentView={view} viewName="today" setView={setView}>
@@ -108,28 +105,29 @@ const GroupPage: React.FC = () => {
                 players={players}
               />
 
-              {/* Awaiting/submitted list + reveal handling */}
-              <TodaysResults players={players} />
+              {/* Awaiting/submitted list + reveal-controlled results */}
+              <TodaysResults />
 
-              {/* Revealed widgets: AI Summary, GIFs, Reactions */}
+              {/* Reveal-gated fun stuff */}
               {showReveal && (
                 <>
                   <AiSummary
                     todaysSubmissions={todaysSubmissions}
                     today={today}
                     groupId={groupId}
-                    reveal={showReveal}
+                    existingSummary={allSubmissions[today]?.aiSummary}
                   />
+
                   <GiphyDisplay
                     today={today}
                     reveal={showReveal}
-                    // optional: tag who posted, if you track current user name elsewhere
-                    // currentUser={getDisplayName() ?? ""}
+                    currentUser={currentUser}
                   />
+
                   <EmojiReactions
                     today={today}
                     reveal={showReveal}
-                    // currentUser={getDisplayName() ?? ""}
+                    currentUser={currentUser}
                     showIndexWarning={false}
                   />
                 </>
