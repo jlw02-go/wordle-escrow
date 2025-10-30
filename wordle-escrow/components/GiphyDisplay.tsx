@@ -6,7 +6,6 @@ import {
   addDoc,
   collection,
   onSnapshot,
-  orderBy,
   query,
   serverTimestamp,
   where,
@@ -15,29 +14,18 @@ import {
 type GifDoc = {
   id?: string;
   groupId: string;
-  date: string;          // YYYY-MM-DD
-  url: string;           // gif url (downsampled or original)
+  date: string; // YYYY-MM-DD
+  url: string;
   title?: string;
-  postedBy?: string;     // optional “Joe”/“Pete”
+  postedBy?: string;
   createdAt?: any;
 };
 
 type Props = {
-  today: string;               // YYYY-MM-DD (passed from GroupPage)
-  reveal: boolean;             // only allow posting/seeing after reveal
-  currentUser?: string;        // optional (if you want to tag postedBy)
+  today: string; // YYYY-MM-DD
+  reveal: boolean; // allow posting/seeing only after reveal
+  currentUser?: string; // optional for “posted by”
 };
-
-const TZ = "America/Chicago";
-function todayISO() {
-  const fmt = new Intl.DateTimeFormat("en-CA", {
-    timeZone: TZ,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  });
-  return fmt.format(new Date());
-}
 
 const GIPHY_KEY = import.meta.env.VITE_GIPHY_API_KEY || "";
 
@@ -48,39 +36,52 @@ const GiphyDisplay: React.FC<Props> = ({ today, reveal, currentUser }) => {
   const [q, setQ] = useState("");
   const [results, setResults] = useState<any[]>([]);
   const [searching, setSearching] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const disabled = !reveal;
 
-  // Live feed of today's GIFs
+  // ---- STEP 1: live listener without orderBy (no index required)
   useEffect(() => {
     if (!db || !groupId) return;
     setLoading(true);
+    setError(null);
+
     const qRef = query(
       collection(db, "gifs"),
       where("groupId", "==", groupId),
-      where("date", "==", today),
-      orderBy("createdAt", "asc")
+      where("date", "==", today)
     );
+
     const unsub = onSnapshot(
       qRef,
       (snap) => {
-        const rows: GifDoc[] = snap.docs.map((d) => {
-          const data = d.data() as any;
-          return { id: d.id, ...(data as GifDoc) };
+        const rows: GifDoc[] = snap.docs.map((d) => ({ id: d.id, ...(d.data() as GifDoc) }));
+        // client-side sort by createdAt if present
+        rows.sort((a, b) => {
+          const ta = a.createdAt?.toMillis?.() ?? 0;
+          const tb = b.createdAt?.toMillis?.() ?? 0;
+          return ta - tb;
         });
         setGifs(rows);
         setLoading(false);
       },
       (err) => {
         console.error("[GiphyDisplay] onSnapshot error:", err);
+        setError("Could not load GIFs.");
         setLoading(false);
       }
     );
+
     return () => unsub();
   }, [groupId, today]);
 
   const doSearch = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!q.trim() || !GIPHY_KEY) return;
+    setError(null);
+    if (!q.trim()) return;
+    if (!GIPHY_KEY) {
+      setError("Missing VITE_GIPHY_API_KEY.");
+      return;
+    }
     try {
       setSearching(true);
       const endpoint = `https://api.giphy.com/v1/gifs/search?api_key=${encodeURIComponent(
@@ -94,22 +95,47 @@ const GiphyDisplay: React.FC<Props> = ({ today, reveal, currentUser }) => {
     } catch (err) {
       console.error("[GiphyDisplay] search error:", err);
       setResults([]);
+      setError("Giphy search failed.");
     } finally {
       setSearching(false);
     }
   };
 
   const postGif = async (gif: any) => {
-    if (!db || !groupId || !reveal) return;
+    setError(null);
+    if (!db || !groupId) {
+      setError("Firestore not initialized.");
+      return;
+    }
+    if (!reveal) {
+      setError("GIFs are disabled until reveal.");
+      return;
+    }
     const best =
       gif?.images?.downsized_medium?.url ||
       gif?.images?.downsized?.url ||
       gif?.images?.original?.url ||
       gif?.url;
-    if (!best) return;
+    if (!best) {
+      setError("Could not resolve GIF URL.");
+      return;
+    }
+
+    // Optimistic UI: show it immediately
+    const tempId = `temp-${Date.now()}`;
+    const optimistic: GifDoc = {
+      id: tempId,
+      groupId,
+      date: today,
+      url: best,
+      title: gif?.title || "",
+      postedBy: currentUser || "",
+      createdAt: { toMillis: () => Date.now() },
+    };
+    setGifs((prev) => [...prev, optimistic]);
 
     try {
-      await addDoc(collection(db, "gifs"), {
+      const ref = await addDoc(collection(db, "gifs"), {
         groupId,
         date: today,
         url: best,
@@ -117,32 +143,35 @@ const GiphyDisplay: React.FC<Props> = ({ today, reveal, currentUser }) => {
         postedBy: currentUser || "",
         createdAt: serverTimestamp(),
       } as GifDoc);
+
+      // Replace optimistic entry with real doc
+      setGifs((prev) =>
+        prev.map((g) => (g.id === tempId ? { ...optimistic, id: ref.id } : g))
+      );
     } catch (err) {
       console.error("[GiphyDisplay] postGif error:", err);
+      setError("Failed to post GIF (check Firestore rules or quota).");
+      setGifs((prev) => prev.filter((g) => g.id !== tempId));
     }
   };
 
-  const header = useMemo(() => {
+  const banner = useMemo(() => {
     if (!reveal) {
-      return (
-        <p className="text-sm text-gray-400">
-          GIFs are hidden until both players submit or it’s 1:00 PM Central.
-        </p>
-      );
+      return "GIFs are hidden until both players submit or it’s 1:00 PM Central.";
     }
-    return (
-      <p className="text-sm text-gray-400">
-        Search GIPHY and click a result to add it to today’s feed.
-      </p>
-    );
+    if (!GIPHY_KEY) {
+      return "Missing VITE_GIPHY_API_KEY — set it in Netlify env to enable GIF search.";
+    }
+    return "Search GIPHY and click a result to add it to today’s feed.";
   }, [reveal]);
 
   return (
     <section className="rounded-lg border border-gray-700 p-4">
       <h3 className="text-lg font-semibold mb-2">Today’s GIFs</h3>
-      {header}
+      <p className="text-sm text-gray-400">{banner}</p>
+      {error && <p className="mt-2 text-sm text-red-400">{error}</p>}
 
-      {/* Search UI (disabled if not revealed) */}
+      {/* Search UI */}
       <form onSubmit={doSearch} className="mt-3 flex gap-2">
         <input
           type="text"
@@ -150,19 +179,19 @@ const GiphyDisplay: React.FC<Props> = ({ today, reveal, currentUser }) => {
           onChange={(e) => setQ(e.target.value)}
           placeholder="Search GIFs (e.g., victory, clutch, meltdown)"
           className="flex-1 bg-gray-800 border border-gray-700 rounded-md px-3 py-2 text-white placeholder-gray-500 disabled:opacity-60"
-          disabled={disabled}
+          disabled={!reveal || !GIPHY_KEY}
         />
         <button
           type="submit"
-          disabled={disabled || searching || !q.trim()}
+          disabled={!reveal || !GIPHY_KEY || searching || !q.trim()}
           className="bg-wordle-green text-white font-semibold px-4 rounded-md disabled:bg-gray-600"
         >
           {searching ? "Searching…" : "Search"}
         </button>
       </form>
 
-      {/* Search results grid */}
-      {reveal && results.length > 0 && (
+      {/* Search results */}
+      {reveal && GIPHY_KEY && results.length > 0 && (
         <div className="mt-3 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
           {results.map((g: any) => {
             const url =
