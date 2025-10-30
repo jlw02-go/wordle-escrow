@@ -23,13 +23,13 @@ type AllSubmissions = Record<
 >;
 
 type Props = {
-  // We accept upstream stats but compute display ourselves to enforce reveal gates.
+  // upstream stats allowed but we compute display locally to enforce reveal
   stats?: Record<string, PerPlayerStats>;
   players: string[];
   reveal: boolean;
   todaysSubmissions?: Record<string, DaySubmission>;
   allSubmissions?: AllSubmissions;
-  today?: string;
+  today?: string; // YYYY-MM-DD
 };
 
 function asNumberScore(v: unknown): number | null {
@@ -41,6 +41,7 @@ function asNumberScore(v: unknown): number | null {
   const m = s.match(/^(\d+)/);
   return m ? Number(m[1]) : null;
 }
+
 function normalizeGrid(grid: unknown): string[] {
   if (Array.isArray(grid)) {
     return grid.map(g => (g == null ? "" : String(g))).filter(l => l.trim() !== "");
@@ -61,15 +62,22 @@ export default function PlayerStats({
   allSubmissions = {},
   today = "",
 }: Props) {
-  // Build unified map; if not revealed, EXCLUDE today entirely from stats/wins.
+  // Build an effective map:
+  // - If NOT revealed, exclude today entirely (prevents leakage).
+  // - If revealed, start with allSubmissions and MERGE todaysSubmissions into today.
   const effectiveDays: AllSubmissions = useMemo(() => {
     const copy: AllSubmissions = {};
     for (const d of Object.keys(allSubmissions)) {
-      if (!reveal && d === today) continue; // hide
+      if (!reveal && d === today) continue; // hide today until reveal
       copy[d] = allSubmissions[d];
     }
+    if (reveal && today) {
+      const base = copy[today] || {};
+      // don't blow away existing; add what's in todaysSubmissions
+      copy[today] = { ...base, ...todaysSubmissions };
+    }
     return copy;
-  }, [allSubmissions, reveal, today]);
+  }, [allSubmissions, todaysSubmissions, reveal, today]);
 
   // Aggregate per-player stats from effectiveDays
   const aggregates = useMemo(() => {
@@ -99,14 +107,14 @@ export default function PlayerStats({
         a.datesPlayed.push(date);
       }
     }
-    // compute streaks (consecutive recent days with submissions)
+
+    // streak = consecutive most-recent days with a submission
     const streaks: Record<string, number> = {};
     for (const p of players) {
       const played = new Set(base[p].datesPlayed);
-      const sorted = dates.slice().sort(); // ascending
       let tail = 0;
-      for (let i = sorted.length - 1; i >= 0; i--) {
-        const d = sorted[i];
+      for (let i = dates.length - 1; i >= 0; i--) {
+        const d = dates[i];
         if (played.has(d)) tail += 1;
         else break;
       }
@@ -124,16 +132,18 @@ export default function PlayerStats({
         streak: streaks[p] || 0,
       };
     });
+
     return { rows, dates };
   }, [effectiveDays, players]);
 
-  // Wins (Joe vs Pete) over effectiveDays only
+  // Wins (pairwise Joe vs Pete style). If you add more players later,
+  // adjust to do round-robin; for now we compare the first two players.
   const winsByPlayer = useMemo(() => {
     const wins: Record<string, number> = {};
     for (const p of players) wins[p] = 0;
     if (players.length < 2) return wins;
-    const [p1, p2] = players;
 
+    const [p1, p2] = players;
     for (const date of Object.keys(effectiveDays)) {
       const day = effectiveDays[date] || {};
       const s1 = asNumberScore(day[p1]?.score);
