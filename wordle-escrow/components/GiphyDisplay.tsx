@@ -23,11 +23,26 @@ type GifDoc = {
 
 type Props = {
   today: string; // YYYY-MM-DD
-  reveal: boolean; // allow posting/seeing only after reveal
-  currentUser?: string; // optional for “posted by”
+  reveal: boolean;
+  currentUser?: string; // optional initial user (we’ll still allow setting it here)
 };
 
 const GIPHY_KEY = import.meta.env.VITE_GIPHY_API_KEY || "";
+
+function getSavedName() {
+  try {
+    const v = localStorage.getItem("displayName");
+    return v && v.trim() ? v.trim() : "";
+  } catch {
+    return "";
+  }
+}
+
+function saveName(n: string) {
+  try {
+    localStorage.setItem("displayName", n);
+  } catch {}
+}
 
 const GiphyDisplay: React.FC<Props> = ({ today, reveal, currentUser }) => {
   const { groupId } = useParams();
@@ -37,9 +52,15 @@ const GiphyDisplay: React.FC<Props> = ({ today, reveal, currentUser }) => {
   const [results, setResults] = useState<any[]>([]);
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const disabled = !reveal;
 
-  // ---- STEP 1: live listener without orderBy (no index required)
+  // simple “who am I” handling
+  const [who, setWho] = useState<string>(currentUser || getSavedName());
+
+  useEffect(() => {
+    if (!who && currentUser) setWho(currentUser);
+  }, [currentUser]);
+
+  // Live feed without orderBy (no index required)
   useEffect(() => {
     if (!db || !groupId) return;
     setLoading(true);
@@ -55,7 +76,6 @@ const GiphyDisplay: React.FC<Props> = ({ today, reveal, currentUser }) => {
       qRef,
       (snap) => {
         const rows: GifDoc[] = snap.docs.map((d) => ({ id: d.id, ...(d.data() as GifDoc) }));
-        // client-side sort by createdAt if present
         rows.sort((a, b) => {
           const ta = a.createdAt?.toMillis?.() ?? 0;
           const tb = b.createdAt?.toMillis?.() ?? 0;
@@ -121,15 +141,17 @@ const GiphyDisplay: React.FC<Props> = ({ today, reveal, currentUser }) => {
       return;
     }
 
-    // Optimistic UI: show it immediately
+    const postedBy = (who || "").trim();
+
+    // Optimistic UI
     const tempId = `temp-${Date.now()}`;
     const optimistic: GifDoc = {
       id: tempId,
-      groupId,
+      groupId: groupId!,
       date: today,
       url: best,
       title: gif?.title || "",
-      postedBy: currentUser || "",
+      postedBy,
       createdAt: { toMillis: () => Date.now() },
     };
     setGifs((prev) => [...prev, optimistic]);
@@ -140,11 +162,10 @@ const GiphyDisplay: React.FC<Props> = ({ today, reveal, currentUser }) => {
         date: today,
         url: best,
         title: gif?.title || "",
-        postedBy: currentUser || "",
+        postedBy,
         createdAt: serverTimestamp(),
       } as GifDoc);
 
-      // Replace optimistic entry with real doc
       setGifs((prev) =>
         prev.map((g) => (g.id === tempId ? { ...optimistic, id: ref.id } : g))
       );
@@ -156,19 +177,36 @@ const GiphyDisplay: React.FC<Props> = ({ today, reveal, currentUser }) => {
   };
 
   const banner = useMemo(() => {
-    if (!reveal) {
-      return "GIFs are hidden until both players submit or it’s 1:00 PM Central.";
-    }
-    if (!GIPHY_KEY) {
-      return "Missing VITE_GIPHY_API_KEY — set it in Netlify env to enable GIF search.";
-    }
+    if (!reveal) return "GIFs are hidden until both players submit or it’s 1:00 PM Central.";
+    if (!GIPHY_KEY) return "Missing VITE_GIPHY_API_KEY — set it in Netlify env to enable GIF search.";
     return "Search GIPHY and click a result to add it to today’s feed.";
   }, [reveal]);
 
   return (
     <section className="rounded-lg border border-gray-700 p-4">
-      <h3 className="text-lg font-semibold mb-2">Today’s GIFs</h3>
-      <p className="text-sm text-gray-400">{banner}</p>
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="text-lg font-semibold">Today’s GIFs</h3>
+
+        {/* Tiny "post as" control */}
+        <div className="flex items-center gap-2 text-sm">
+          <span className="text-gray-400">Post as:</span>
+          <select
+            value={who}
+            onChange={(e) => {
+              setWho(e.target.value);
+              saveName(e.target.value);
+            }}
+            className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-white"
+            title="Choose your name"
+          >
+            <option value="">—</option>
+            <option value="Joe">Joe</option>
+            <option value="Pete">Pete</option>
+          </select>
+        </div>
+      </div>
+
+      <p className="text-sm text-gray-400 mt-1">{banner}</p>
       {error && <p className="mt-2 text-sm text-red-400">{error}</p>}
 
       {/* Search UI */}
@@ -204,7 +242,7 @@ const GiphyDisplay: React.FC<Props> = ({ today, reveal, currentUser }) => {
                 type="button"
                 onClick={() => postGif(g)}
                 className="border border-gray-700 rounded overflow-hidden hover:border-wordle-green"
-                title="Add this GIF"
+                title={who ? `Post as ${who}` : "Set your name in the selector first"}
               >
                 {url ? <img src={url} alt={g?.title || "GIF"} className="w-full h-auto" /> : null}
               </button>
