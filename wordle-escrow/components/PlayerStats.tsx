@@ -18,17 +18,18 @@ type DaySubmission = {
 };
 
 type AllSubmissions = Record<
-  string,                // YYYY-MM-DD
+  string, // YYYY-MM-DD
   Record<string, DaySubmission> // player -> submission
 >;
 
 type Props = {
-  stats: Record<string, PerPlayerStats>;
-  players: string[]; // e.g., ["Joe", "Pete"]
+  // We accept upstream stats but compute display ourselves to enforce reveal gates.
+  stats?: Record<string, PerPlayerStats>;
+  players: string[];
   reveal: boolean;
   todaysSubmissions?: Record<string, DaySubmission>;
   allSubmissions?: AllSubmissions;
-  today?: string; // YYYY-MM-DD
+  today?: string;
 };
 
 function asNumberScore(v: unknown): number | null {
@@ -36,95 +37,120 @@ function asNumberScore(v: unknown): number | null {
   if (typeof v === "number" && Number.isFinite(v)) return v;
   const s = String(v).trim();
   if (!s) return null;
-  if (/^x/i.test(s)) return 7; // treat X as worse than 6 guesses
+  if (/^x/i.test(s)) return 7; // treat X as worse than 6
   const m = s.match(/^(\d+)/);
   return m ? Number(m[1]) : null;
 }
-
 function normalizeGrid(grid: unknown): string[] {
   if (Array.isArray(grid)) {
-    return grid.map((g) => (g == null ? "" : String(g))).filter((l) => l.trim() !== "");
+    return grid.map(g => (g == null ? "" : String(g))).filter(l => l.trim() !== "");
   }
   if (typeof grid === "string") {
     return grid
       .split(/\r?\n/)
-      .map((l) => l.trimEnd())
-      .filter((l) => l.length > 0);
+      .map(l => l.trimEnd())
+      .filter(l => l.length > 0);
   }
   return [];
 }
 
 export default function PlayerStats({
-  stats,
   players,
   reveal,
   todaysSubmissions = {},
   allSubmissions = {},
   today = "",
 }: Props) {
-  // Build a unified day-map that includes today after reveal (in case the hook hasn't folded it in yet).
-  const unifiedDays: AllSubmissions = useMemo(() => {
-    const copy: AllSubmissions = { ...allSubmissions };
-    if (reveal && today) {
-      const existing = copy[today] || {};
-      // non-destructive merge: today's local submissions override nothing, just fill in if present
-      copy[today] = { ...existing, ...todaysSubmissions };
+  // Build unified map; if not revealed, EXCLUDE today entirely from stats/wins.
+  const effectiveDays: AllSubmissions = useMemo(() => {
+    const copy: AllSubmissions = {};
+    for (const d of Object.keys(allSubmissions)) {
+      if (!reveal && d === today) continue; // hide
+      copy[d] = allSubmissions[d];
     }
     return copy;
-  }, [allSubmissions, todaysSubmissions, reveal, today]);
+  }, [allSubmissions, reveal, today]);
 
-  // Compute cumulative wins per player.
-  // Count a win on days where BOTH players have numeric scores and they differ.
-  // Exclude today's outcome when !reveal.
+  // Aggregate per-player stats from effectiveDays
+  const aggregates = useMemo(() => {
+    type Agg = {
+      games: number;
+      total: number;
+      best: number | null;
+      worst: number | null;
+      datesPlayed: string[];
+    };
+    const base: Record<string, Agg> = {};
+    for (const p of players) {
+      base[p] = { games: 0, total: 0, best: null, worst: null, datesPlayed: [] };
+    }
+
+    const dates = Object.keys(effectiveDays).sort();
+    for (const date of dates) {
+      const day = effectiveDays[date] || {};
+      for (const p of players) {
+        const s = asNumberScore(day[p]?.score);
+        if (s == null) continue;
+        const a = base[p];
+        a.games += 1;
+        a.total += s;
+        a.best = a.best == null ? s : Math.min(a.best, s);
+        a.worst = a.worst == null ? s : Math.max(a.worst, s);
+        a.datesPlayed.push(date);
+      }
+    }
+    // compute streaks (consecutive recent days with submissions)
+    const streaks: Record<string, number> = {};
+    for (const p of players) {
+      const played = new Set(base[p].datesPlayed);
+      const sorted = dates.slice().sort(); // ascending
+      let tail = 0;
+      for (let i = sorted.length - 1; i >= 0; i--) {
+        const d = sorted[i];
+        if (played.has(d)) tail += 1;
+        else break;
+      }
+      streaks[p] = tail;
+    }
+
+    const rows = players.map(p => {
+      const a = base[p];
+      return {
+        player: p,
+        games: a.games,
+        avg: a.games ? a.total / a.games : 0,
+        best: a.best,
+        worst: a.worst,
+        streak: streaks[p] || 0,
+      };
+    });
+    return { rows, dates };
+  }, [effectiveDays, players]);
+
+  // Wins (Joe vs Pete) over effectiveDays only
   const winsByPlayer = useMemo(() => {
     const wins: Record<string, number> = {};
     for (const p of players) wins[p] = 0;
+    if (players.length < 2) return wins;
+    const [p1, p2] = players;
 
-    const dates = Object.keys(unifiedDays).sort(); // order doesn’t matter for the count
-    for (const date of dates) {
-      if (!today) continue;
-      if (date === today && !reveal) continue; // hide today pre-reveal
-
-      const day = unifiedDays[date] || {};
-      if (players.length < 2) continue;
-
-      // We’re doing head-to-head for first two players (Joe vs Pete)
-      const [p1, p2] = players;
-
+    for (const date of Object.keys(effectiveDays)) {
+      const day = effectiveDays[date] || {};
       const s1 = asNumberScore(day[p1]?.score);
       const s2 = asNumberScore(day[p2]?.score);
       if (s1 == null || s2 == null) continue;
       if (s1 === s2) continue;
-
       if (s1 < s2) wins[p1] += 1;
       else wins[p2] += 1;
     }
     return wins;
-  }, [unifiedDays, players, reveal, today]);
+  }, [effectiveDays, players]);
 
-  // Prepare rows for display
-  const rows = useMemo(() => {
-    return players.map((p) => {
-      const s = stats[p] || {};
-      return {
-        player: p,
-        games: s.gamesPlayed ?? 0,
-        avg: s.avgScore ?? 0,
-        best: s.bestScore ?? null,
-        worst: s.worstScore ?? null,
-        streak: s.streak ?? 0,
-        wins: winsByPlayer[p] ?? 0,
-      };
-    });
-  }, [players, stats, winsByPlayer]);
-
-  // Today’s grids (only after reveal)
+  // Today’s grids only after reveal
   const todaysGrids = useMemo(() => {
     if (!reveal) return {};
     const obj: Record<string, string[]> = {};
-    for (const p of players) {
-      obj[p] = normalizeGrid(todaysSubmissions[p]?.grid);
-    }
+    for (const p of players) obj[p] = normalizeGrid(todaysSubmissions[p]?.grid);
     return obj;
   }, [players, todaysSubmissions, reveal]);
 
@@ -146,10 +172,10 @@ export default function PlayerStats({
             </tr>
           </thead>
           <tbody>
-            {rows.map((r) => (
+            {aggregates.rows.map(r => (
               <tr key={r.player} className="border-b border-gray-800">
                 <td className="py-2 pr-3 font-medium">{r.player}</td>
-                <td className="py-2 pr-3 text-right">{r.wins}</td>
+                <td className="py-2 pr-3 text-right">{winsByPlayer[r.player] ?? 0}</td>
                 <td className="py-2 pr-3 text-right">{r.games}</td>
                 <td className="py-2 pr-3 text-right">
                   {r.games ? (Math.round((Number(r.avg) || 0) * 100) / 100).toFixed(2) : "—"}
@@ -163,11 +189,11 @@ export default function PlayerStats({
         </table>
       </div>
 
-      {/* Today’s Guess Patterns (after reveal) */}
-      {reveal && (
+      {/* Today’s Guess Patterns after reveal */}
+      {reveal ? (
         <div className="mt-4">
           <h4 className="text-sm font-semibold mb-2">Today’s Guess Patterns</h4>
-          {players.map((p) => {
+          {players.map(p => {
             const lines = todaysGrids[p] || [];
             return (
               <div key={p} className="mb-3">
@@ -185,11 +211,9 @@ export default function PlayerStats({
             );
           })}
         </div>
-      )}
-
-      {!reveal && (
+      ) : (
         <p className="mt-2 text-xs text-gray-500">
-          Today’s guess patterns and head-to-head outcome are hidden until both submit or it’s 1:00 PM Central.
+          Today’s guess patterns and head-to-head outcome are hidden until both submit or it’s 7:00 PM Central.
         </p>
       )}
     </section>
